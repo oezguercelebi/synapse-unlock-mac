@@ -6,7 +6,8 @@
 # launchd runs the copy, not this folder: macOS privacy protection (TCC) keeps launchd jobs out of ~/Documents,
 # ~/Desktop, ~/Downloads and iCloud Drive. The copy makes its own certificate and keeps its own logs/.
 # Idempotent: after a git pull or a change under devices/, run it again to re-sync the copy and reload the agent.
-# A mirror started by launch.sh is handed over to the agent; Razer.app keeps running and reconnects.
+# A mirror started by launch.sh is handed over to the agent; Razer.app keeps running and reconnects. If a later step
+# fails, start at login ends up off and a manual mirror takes the port back (see fail() below).
 # Usage: ./enable-login.sh
 # Env:   MIRROR_NODE (absolute path of the node for the agent; default: see below), MIRROR_PORT (8443)
 set -euo pipefail
@@ -94,8 +95,9 @@ EOF
 plutil -lint -s "$tmp" || { rm -f "$tmp"; exit 1; }
 
 # 2. Free the port: unload a loaded agent (its mirror stops with it), hand a manual mirror from this repo over.
-#    Razer.app is not touched.
-had_manual=0
+#    Razer.app is not touched. had_mirror: one of our mirrors (manual or the agent's) served the port before this.
+had_mirror=0
+case "$(port_owner)" in agent\ *|manual\ *) had_mirror=1 ;; esac
 if agent_loaded; then
   echo "The login agent is loaded; unloading it to re-sync the installed copy and reload it."
   agent_bootout
@@ -106,30 +108,35 @@ if pid="$(agent_server_pid)"; then
 fi
 if pid="$(server_pid)"; then
   echo "Handing the manual mirror (pid $pid) over to the login agent; Razer.app keeps running and reconnects."
-  had_manual=1
   stop_server
 fi
 
-# Undo for the failure paths below: the manual mirror comes back so a running Razer.app stays served.
-restore_manual() {
-  [[ "$had_manual" == 1 ]] || return 0
-  echo "Starting the manual mirror from this repo again; Razer.app was not touched."
-  start_server
-  if wait_for_mirror "$SERVER_CHILD"; then
-    echo "Manual mirror is up again (pid $SERVER_CHILD)."
-  else
-    echo "ERROR: the manual mirror did not come up. Last server output:" >&2
-    tail -n 20 "$SERVER_OUT" >&2 || true
+# Undo for every failure below, then exit 1. The agent is unloaded and the plist removed, so start at login is off
+# rather than half on (also when it was on before this run). If a mirror served the port before, or Razer.app runs
+# through the mirror, a manual mirror from this repo takes the port, so Razer.app never points at a dead port.
+# The installed copy and its logs stay for diagnosis; ./disable-login.sh removes them.
+fail() {
+  echo "ERROR: $1" >&2
+  rm -f "$tmp"
+  agent_bootout || true
+  if pid="$(agent_server_pid)"; then kill_server_pid "$pid"; fi
+  rm -f "$AGENT_PLIST"
+  echo "Start at login is OFF (no $AGENT_PLIST). The installed copy and its logs stay; ./disable-login.sh removes them." >&2
+  if [[ "$had_mirror" == 1 ]] || uses_mirror "$(razer_main_line)"; then
+    echo "Starting a manual mirror from this repo so Razer.app stays served; Razer.app is not touched." >&2
+    if start_server && wait_for_mirror "$SERVER_CHILD"; then
+      echo "Manual mirror is up (pid $SERVER_CHILD, logs in $LOG_DIR); ./stop.sh stops it." >&2
+      warn_mirror_errors
+    else
+      echo "ERROR: the manual mirror did not come up ($(mirror_missing || true)). Last server output:" >&2
+      tail -n 20 "$SERVER_OUT" >&2 || true
+    fi
   fi
+  exit 1
 }
 
 # 3. Sync the installed copy.
-if ! install_sync; then
-  echo "ERROR: could not copy the runtime to $INSTALL_DIR." >&2
-  rm -f "$tmp"
-  restore_manual
-  exit 1
-fi
+if ! install_sync; then fail "could not copy the runtime to $INSTALL_DIR (see above)."; fi
 echo "Synced the installed copy: $INSTALL_DIR (agent.sh, lib.sh, server.mjs, devices/; its certs/ and logs/ are its own)."
 
 # 4. Install the plist and load it. RunAtLoad starts agent.sh now and at every login.
@@ -137,12 +144,7 @@ mkdir -p "$(dirname "$AGENT_PLIST")"
 mv "$tmp" "$AGENT_PLIST"
 echo "Wrote $AGENT_PLIST (node $NODE_BIN)."
 offset="$(stat -f %z "$AGENT_OUT" 2>/dev/null || echo 0)"
-if ! launchctl bootstrap "$AGENT_DOMAIN" "$AGENT_PLIST"; then
-  echo "ERROR: launchctl bootstrap failed; start at login was NOT enabled (plist removed)." >&2
-  rm -f "$AGENT_PLIST"
-  restore_manual
-  exit 1
-fi
+if ! launchctl bootstrap "$AGENT_DOMAIN" "$AGENT_PLIST"; then fail "launchctl bootstrap failed."; fi
 echo "Loaded $AGENT_LABEL into $AGENT_DOMAIN."
 
 rc=0
@@ -151,13 +153,13 @@ if [[ "$rc" == 2 ]]; then
   echo "ERROR: launchd may not read the installed copy:" >&2
   tail -c +$((offset + 1)) "$AGENT_OUT" | grep -m1 'Operation not permitted' >&2 || true
   tcc_hint
-  agent_bootout
-  rm -f "$AGENT_PLIST"
-  echo "Start at login was NOT enabled: the agent is unloaded and $AGENT_PLIST removed." >&2
-  restore_manual
-  exit 1
+  fail "the login agent could not run (see above)."
+elif [[ "$rc" != 0 ]] && ! agent_server_pid >/dev/null; then
+  echo "Last agent output:" >&2
+  tail -n 20 "$AGENT_OUT" >&2 || true
+  fail "the login agent's mirror is not running 30 s after loading it."
 elif [[ "$rc" != 0 ]]; then
-  echo "WARNING: the agent's mirror is not ready after 30 s ($(mirror_missing || true)); the agent keeps waiting. Last agent output:" >&2
+  echo "WARNING: the agent's mirror runs but is not ready after 30 s ($(mirror_missing || true)); the agent keeps waiting. Last agent output:" >&2
   tail -n 20 "$AGENT_OUT" >&2 || true
   warn_mirror_errors
 else

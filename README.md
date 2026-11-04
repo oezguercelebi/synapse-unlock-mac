@@ -288,8 +288,15 @@ resolved to a versioned path such as Homebrew's `Cellar/node/<version>`, which t
 comes only from a version manager's per-shell link (fnm, nvm), that link may be gone by the next login: set
 `MIRROR_NODE` to a node that stays put. `status.sh` shows the plist's node and whether it still exists; if it is gone,
 `agent.sh` says so in its `agent.out`, and running `enable-login.sh` again records the current one.
-`MIRROR_PORT` goes into the plist too. If anything fails (copy, bootstrap, or the TCC check, which stays as a
-fallback), the agent is unloaded, the plist removed and the manual mirror restarted.
+`MIRROR_PORT` goes into the plist too.
+
+If the copy, the bootstrap or the TCC check (kept as a fallback) fails, or the agent's mirror is not running 30 s
+after the bootstrap, `enable-login.sh` unloads the agent and removes the plist, so start at login is off rather than
+half on, also when it was on before this run. If a mirror served the port before (a manual one, or the agent's on a
+re-run) or Razer.app runs through the mirror, it then starts a manual mirror from this folder, so Razer.app never
+points at a dead port. The installed copy and its logs stay for diagnosis; `disable-login.sh` removes them. A mirror
+that runs but does not list every device after 30 s (upstream unreachable, say) is left to the agent, which keeps
+waiting.
 
 `agent.sh` starts `server.mjs` as its child, waits until `AvailableDevices.json` lists every device the server loaded
 (it keeps waiting if upstream is unreachable at login, and logs any device file it could not load), and then checks
