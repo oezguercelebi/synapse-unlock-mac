@@ -116,12 +116,15 @@ and needs the `osx` installer block injected and two shared scripts proxied.
   `expect` count per file, path rewrites for any URL path that embeds the PID, and a
   lighting-manifest route if the device's own `DeviceManifest_<pid>_0.json` exists (prefer the
   genuine one). Mark the `productId` rewrite in the main bundle `required`.
-- Verify offline: `node server.mjs --check` must report your file `ok`. Then start the mirror
-  (`./launch.sh`, or `MIRROR_DRY_RUN=1 ./launch.sh` to leave Synapse alone) and
-  `curl -k --resolve apps-mac.razer.com:8443:127.0.0.1` every rewritable file under
-  `/synapse/products/<pid>/…`; zero remaining sibling PIDs/names; `node --check` on every
-  rewritten JS; unrelated files byte-identical to upstream. `./status.sh` must show no `errors`
-  and `AvailableDevices.json` listing your productId.
+- Verify offline: `node server.mjs --check` must report your file `ok`. Then start a second
+  server on a spare port, which leaves Synapse and any running mirror alone: `node server.mjs --port 8444`
+  (stop it with Ctrl-C when done). Do not use `./launch.sh` for this: it quits Synapse, and
+  `MIRROR_DRY_RUN=1 ./launch.sh` quits it too without relaunching it (and is refused while start
+  at login is enabled). `curl -k --resolve apps-mac.razer.com:8444:127.0.0.1 https://apps-mac.razer.com:8444/…`
+  every rewritable file under `/synapse/products/<pid>/…`; zero remaining sibling PIDs/names;
+  `node --check` on every rewritten JS; unrelated files byte-identical to upstream.
+  `MIRROR_PORT=8444 ./status.sh` must show no `errors` and `AvailableDevices.json` listing your
+  productId (its port owner and Razer.app lines do not apply to this test server).
 
 ### 4. Live test
 
@@ -172,5 +175,5 @@ Once the live test passes, set it up so the user never has to think about it aga
 ## If you are a user, not an agent
 
 `git clone` this repo (`synapse-unlock-mac`), `./launch.sh` to try it, `./enable-login.sh` to keep
-it. `./stop.sh --stock` or deleting the folder (after `./disable-login.sh`) returns you to stock
-Synapse.
+it. `./stop.sh --stock --disable-login` returns you to stock Synapse; after that the folder can be
+deleted (README, "Revert").

@@ -10,9 +10,12 @@ So this repo is a tiny, zero-dependency local mirror that sits between Synapse a
 1. 📋 moves your mouse from `UnavailableDevices.json` to `AvailableDevices.json`
 2. 🎭 hands Synapse the sibling's module wearing your mouse's name tag (13 small edits)
 
-Result: full Synapse on Mac — DPI stages, polling, Chroma, Smart-Reel, button remaps, on-board profiles — **tested on real hardware, the mouse itself confirmed it.** 🎉
+Result: Synapse on Mac drives the mouse — DPI stages, polling, Chroma lighting, Smart-Reel — **tested on real hardware, with the DPI and scroll-mode changes confirmed by the mouse itself.** 🎉
+Button remaps, on-board profiles and Hypershift render but were not exercised, and the V3's firmware rejects the two
+scroll level sliders (see [Supported devices](#supported-devices)).
 
-**What we don't touch:** a single Razer file. No re-signing, no driver hacks, no sudo. Delete the folder and you're back to stock. Razer: no hard feelings, please just publish the module. 💚
+**What we don't touch:** a single Razer file. No re-signing, no driver hacks, no sudo. Run `./stop.sh --stock --disable-login`,
+delete the folder, and you're back to stock (see [Revert](#revert)). Razer: no hard feelings, please just publish the module. 💚
 
 ✅ Works today · 🧩 add your own device with one JSON file · 🤖 or hand [`docs/AGENT_PROMPT.md`](docs/AGENT_PROMPT.md) to an AI agent and let it do the whole thing · 🚀 starts at login
 
@@ -314,6 +317,16 @@ Razer.app on its own).
 
 Then delete the folder. With start at login enabled, run `./disable-login.sh` (or the second line) **before** deleting
 the folder: the plist and the installed copy live outside it, and nothing else does.
+
+Already deleted the folder with start at login still on? The agent keeps starting the mirror and Razer.app with the
+switches at every login, and `disable-login.sh` went with the folder. Remove it by hand, then quit Razer Synapse and
+open it again from `/Applications/Razer/Razer Synapse.app`:
+
+```bash
+launchctl bootout gui/$(id -u)/com.synapse-unlock-mac.agent   # unloads the agent; its mirror stops with it
+rm ~/Library/LaunchAgents/com.synapse-unlock-mac.agent.plist
+rm -rf ~/Library/Application\ Support/synapse-unlock-mac
+```
 
 **Nothing Razer-owned is modified.** No file under `/Applications`, `/Library`, `~/Library/Razer` or
 `~/Library/Application Support/Razer` is written. The scripts only quit and launch Razer.app

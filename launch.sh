@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start the local apps-mac.razer.com mirror and launch Razer.app (RazerAppEngine) pointed at it.
 # Usage: ./launch.sh [--backend NAME]   (a backend of a device file, e.g. 153-win for devices/basilisk-v3.json)
-# Env:   MIRROR_PORT (8443), MIRROR_BACKEND, MIRROR_DRY_RUN=1 (start the mirror, print the open command, do not launch)
+# Env:   MIRROR_PORT (8443), MIRROR_BACKEND, MIRROR_DRY_RUN=1 (still quits Razer.app; starts the mirror, prints the
+#        open command and does not relaunch)
 # With start at login enabled (enable-login.sh) launchd owns the mirror: this restarts the login agent instead of
 # starting a second server, and the agent launches Razer.app unless it already runs through the mirror. The agent
 # runs the installed copy in ~/Library/Application Support/synapse-unlock-mac; ./enable-login.sh re-syncs it.
