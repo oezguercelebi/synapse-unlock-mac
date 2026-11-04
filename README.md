@@ -303,8 +303,25 @@ Run against the live upstream with curl `--resolve apps-mac.razer.com:8443:127.0
 - Backend `153-win` serves `apps.razer.com`'s 153 module (`deviceName` `Razer Basilisk V3`), injects the `osx` block,
   serves the osx resource manifest and the two shared scripts.
 
-Not verified: anything inside Razer.app (that `--host-rules` reaches the network service, that the 203 module finds
-and drives the 153 at runtime).
+## Verification (live, 2026-11-04)
+
+Razer.app launched through `launch.sh`, device page exercised control by control, results read from
+`products_153_mw <container>.log` (the module's own HID log) and from the mouse's hardware events:
+
+- `--host-rules` reaches the network service: every request of the session went through the mirror.
+- The 203 module finds the 153 over HID interface 3 (`connectHidDevice … result:true`), reads serial and firmware
+  (1.2.0.0), loads the on-board profiles and macros.
+- DPI stages: set and restored, **confirmed by the mouse** (`DPI_CHANGE` hardware event). Max 26000; typing 35000 clamps.
+- Polling rate: 125 / 500 / 1000 only; 1000 → 500 → 1000 `completed`. The UI logs a spurious `status:"error"`
+  ~20 ms before each `completed`; no toast, no effect.
+- Lighting: effect switch and brightness `SUCCESS`; the engine uses Razer's genuine `DeviceManifest_153_0.json`.
+- Scroll: Tactile ↔ Free-Spin **confirmed by the mouse** (`SCROLL_FREE_OR_NOTCH_MODE_CHANGE_EVENT`); Smart-Reel on/off
+  and Scroll Acceleration on/off `SUCCESS` (user-verified by feel).
+- The **only** commands the V3 firmware rejects are the two level sliders under those toggles:
+  `[2,2,35] Set Scroll Wheel Smart Reel Mode Threshold` and `[2,2,34] Set Scroll Virtual Acceleration Level`
+  → `Error USB Transfer command not supported`. The 35K has these; the wired V3 does not. The features work at the
+  firmware's built-in level; dragging the slider changes nothing on the mouse and the UI shows no error.
+- Button map, Hypershift view, on-board memory (5 slots), profiles and calibration render; not exercised.
 
 ## Risks
 
