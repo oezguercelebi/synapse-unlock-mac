@@ -29,7 +29,12 @@ on_exit() {
 trap on_exit EXIT
 trap 'log "SIGTERM: stopping the mirror server${SERVER_CHILD:+ (pid $SERVER_CHILD)}; Razer.app is left alone."; exit 0' TERM INT
 
-command -v node >/dev/null || { log "ERROR: node not found in PATH=$PATH; run enable-login.sh again."; exit 1; }
+if ! command -v node >/dev/null; then
+  # The plist's PATH starts with the directory of the node enable-login.sh chose (see status.sh, "node").
+  log "ERROR: node not found: ${PATH%%:*}/node, the node enable-login.sh wrote into the plist, is gone (node upgraded, removed, or a version manager's link expired). PATH=$PATH"
+  log "ERROR: run ./enable-login.sh again from the repo to record the current node; until then launchd retries this job every 10 s."
+  exit 1
+fi
 [[ -d "$APP_PATH" ]] || { log "ERROR: Razer.app not found at $APP_PATH"; exit 1; }
 
 log "starting (node $(command -v node), port $PORT)"

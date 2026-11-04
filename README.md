@@ -265,7 +265,7 @@ Keys starting with `_` are ignored. `upstreamHost` and `resolve` (an IP pin) are
 
 ```bash
 ./enable-login.sh    # install and load the login agent; a running manual mirror is handed over
-./status.sh          # who owns port 8443, the installed copy, whether the agent is loaded, its last exit code
+./status.sh          # who owns port 8443, the installed copy, the agent's node, whether it is loaded, its last exit code
 ./disable-login.sh   # unload it, remove the plist and the installed copy; a manual mirror takes over
 ```
 
@@ -281,9 +281,13 @@ edit under `devices/`, run `./enable-login.sh` again to re-sync the copy and rel
 `enable-login.sh` first checks the device files (`server.mjs --check`), then writes
 `~/Library/LaunchAgents/com.synapse-unlock-mac.agent.plist` and loads it into `gui/<uid>` with `launchctl bootstrap`.
 The job runs `/bin/bash <installed copy>/agent.sh` with `RunAtLoad`, `KeepAlive` and `ThrottleInterval` 10. launchd's
-`PATH` is only `/usr/bin:/bin:/usr/sbin:/sbin`, so the plist puts the directory of the real node binary first: the
-`node` in your shell's `PATH` (or `MIRROR_NODE`), resolved when you run `enable-login.sh`, because version-manager
-links such as fnm's per-shell ones do not exist for launchd. After switching node versions, run it again.
+`PATH` is only `/usr/bin:/bin:/usr/sbin:/sbin`, so the plist puts the directory of one node (20 or newer) first, chosen
+in this order: `MIRROR_NODE` (an absolute path to a `node`); Homebrew's stable link `/opt/homebrew/bin/node` or
+`/usr/local/bin/node`, which survives `brew upgrade`; else the `node` in your shell's `PATH`, as found. It is never
+resolved to a versioned path such as Homebrew's `Cellar/node/<version>`, which the next upgrade deletes. If your node
+comes only from a version manager's per-shell link (fnm, nvm), that link may be gone by the next login: set
+`MIRROR_NODE` to a node that stays put. `status.sh` shows the plist's node and whether it still exists; if it is gone,
+`agent.sh` says so in its `agent.out`, and running `enable-login.sh` again records the current one.
 `MIRROR_PORT` goes into the plist too. If anything fails (copy, bootstrap, or the TCC check, which stays as a
 fallback), the agent is unloaded, the plist removed and the manual mirror restarted.
 

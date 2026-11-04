@@ -56,6 +56,16 @@ fi
 echo "== login agent ($AGENT_LABEL)"
 if agent_enabled; then
   echo "plist           : $AGENT_PLIST"
+  # enable-login.sh puts the directory of the agent's node first in the plist's PATH.
+  plist_path="$(plutil -extract EnvironmentVariables.PATH raw -o - "$AGENT_PLIST" 2>/dev/null || true)"
+  plist_node="${plist_path%%:*}/node"
+  if [[ -z "$plist_path" ]]; then
+    echo "node            : unknown (the plist has no PATH); run ./enable-login.sh again"
+  elif [[ -x "$plist_node" ]]; then
+    echo "node            : $plist_node (v$("$plist_node" -p process.versions.node 2>/dev/null || echo '?'))"
+  else
+    echo "node            : MISSING, $plist_node no longer exists: the agent cannot start. Run ./enable-login.sh again."
+  fi
 else
   echo "plist           : none (start at login is off; ./enable-login.sh turns it on)"
 fi

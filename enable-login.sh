@@ -8,18 +8,41 @@
 # Idempotent: after a git pull or a change under devices/, run it again to re-sync the copy and reload the agent.
 # A mirror started by launch.sh is handed over to the agent; Razer.app keeps running and reconnects.
 # Usage: ./enable-login.sh
-# Env:   MIRROR_NODE (node for the agent; default: the node in PATH, resolved to its real path), MIRROR_PORT (8443)
+# Env:   MIRROR_NODE (absolute path of the node for the agent; default: see below), MIRROR_PORT (8443)
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 for a in "$@"; do echo "unknown argument: $a" >&2; exit 2; done
 if [[ "$ROOT" == "$INSTALL_DIR" ]]; then echo "Run enable-login.sh from the repo; $INSTALL_DIR is the installed copy." >&2; exit 2; fi
 
-node_cmd="${MIRROR_NODE:-$(command -v node || true)}"
-[[ -n "$node_cmd" ]] || { echo "node not found in PATH (or set MIRROR_NODE)" >&2; exit 1; }
-# launchd's PATH is /usr/bin:/bin:/usr/sbin:/sbin. Resolve the real binary now: version-manager shims
-# (fnm's per-shell links, for example) do not exist in launchd's environment.
-NODE_BIN="$("$node_cmd" -p process.execPath)" || { echo "cannot run $node_cmd" >&2; exit 1; }
+# The node the agent runs. launchd's PATH is /usr/bin:/bin:/usr/sbin:/sbin, so the plist puts this node's directory
+# first. Never a resolved, versioned path: Homebrew's Cellar/node/<version> is deleted by the next 'brew upgrade'.
+# In order: MIRROR_NODE; a stable link (Homebrew's /opt/homebrew/bin/node or /usr/local/bin/node); the node in this
+# shell's PATH, as found (a version manager's per-shell link may be gone by the next login: set MIRROR_NODE then).
+node_from=""
+NODE_BIN=""
+if [[ -n "${MIRROR_NODE:-}" ]]; then
+  NODE_BIN="$MIRROR_NODE"; node_from="MIRROR_NODE"
+else
+  for n in /opt/homebrew/bin/node /usr/local/bin/node; do
+    if [[ -x "$n" ]]; then NODE_BIN="$n"; node_from="stable link"; break; fi
+  done
+  if [[ -z "$NODE_BIN" ]]; then NODE_BIN="$(command -v node || true)"; node_from="this shell's PATH"; fi
+fi
+[[ -n "$NODE_BIN" ]] || { echo "node not found: not in PATH, /opt/homebrew/bin or /usr/local/bin (or set MIRROR_NODE)" >&2; exit 1; }
+if [[ "$NODE_BIN" != /* || "${NODE_BIN##*/}" != node ]]; then
+  echo "The agent's node must be an absolute path to a file named node (the agent finds it through PATH): $NODE_BIN" >&2
+  exit 1
+fi
+node_version="$("$NODE_BIN" -p process.versions.node 2>/dev/null)" || { echo "cannot run $NODE_BIN" >&2; exit 1; }
+[[ "${node_version%%.*}" -ge 20 ]] || { echo "$NODE_BIN is node $node_version; the mirror needs node 20 or newer (set MIRROR_NODE)" >&2; exit 1; }
+# Everything this script runs with node (server.mjs --check, lib.sh helpers, a restored manual mirror) uses that node.
+PATH="$(dirname "$NODE_BIN"):$PATH"
+echo "Node for the login agent: $NODE_BIN (v$node_version, from $node_from)."
+if [[ "$node_from" == "this shell's PATH" ]]; then
+  echo "  If that is a version manager's per-shell link (fnm, nvm), it may be gone by the next login: set MIRROR_NODE to"
+  echo "  a node path that stays put and run ./enable-login.sh again. ./status.sh shows whether the plist's node exists."
+fi
 [[ -d "$APP_PATH" ]] || { echo "Razer.app not found at $APP_PATH" >&2; exit 1; }
 command -v rsync >/dev/null || { echo "rsync not found in PATH" >&2; exit 1; }
 
