@@ -3,9 +3,12 @@
 # Usage: ./launch.sh [--backend NAME]   (a backend of a device file, e.g. 153-win for devices/basilisk-v3.json)
 # Env:   MIRROR_PORT (8443), MIRROR_BACKEND, MIRROR_DRY_RUN=1 (start the mirror, print the open command, do not launch)
 # With start at login enabled (enable-login.sh) launchd owns the mirror: this restarts the login agent instead of
-# starting a second server, and the agent launches Razer.app unless it already runs through the mirror.
+# starting a second server, and the agent launches Razer.app unless it already runs through the mirror. The agent
+# runs the installed copy in ~/Library/Application Support/synapse-unlock-mac; ./enable-login.sh re-syncs it.
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+
+MIRROR_LOGS="$LOG_DIR"
 
 BACKEND="${MIRROR_BACKEND:-}"
 while [[ $# -gt 0 ]]; do
@@ -25,7 +28,13 @@ if agent_enabled; then
     echo "The login agent uses the backends set in the device files (devices/*.json). Run ./disable-login.sh first to use them." >&2
     exit 2
   fi
-  old="$(server_pid || true)"
+  if ! install_present; then
+    echo "ERROR: start at login is enabled but the installed copy in $INSTALL_DIR is missing." >&2
+    echo "Run ./enable-login.sh to install it again (or ./disable-login.sh to turn start at login off)." >&2
+    exit 1
+  fi
+  MIRROR_LOGS="$INSTALL_DIR/logs"
+  old="$(agent_server_pid || true)"
   offset="$(stat -f %z "$AGENT_OUT" 2>/dev/null || echo 0)"
   if agent_loaded; then
     echo "Start at login is enabled: restarting the login agent (launchctl kickstart -k) instead of starting a second server."
@@ -39,9 +48,23 @@ if agent_enabled; then
     tail -n 20 "$AGENT_OUT" >&2 || true
     exit 1
   fi
-  echo "Mirror is up under the login agent (pid $pid); AvailableDevices.json lists $(declared_label)."
+  echo "Mirror is up under the login agent (pid $pid); AvailableDevices.json lists $(declared_label "$INSTALL_DIR/devices")."
   echo "The agent launches Razer.app unless it already runs through the mirror (log: $AGENT_OUT)."
+  if ! install_current; then
+    echo "Note: the installed copy differs from this repo (a git pull or a change under devices/?);"
+    echo "      run ./enable-login.sh to re-sync it and reload the agent."
+  fi
 else
+  # A loaded agent without its plist would still hold the port: unload it.
+  if agent_loaded; then
+    echo "The login agent is loaded but has no plist; unloading it."
+    agent_bootout
+  fi
+  if pid="$(agent_server_pid)"; then
+    echo "Stopping a leftover mirror of the installed copy (pid $pid)."
+    kill_server_pid "$pid"
+  fi
+
   # 1. Quit a running Razer.app so it restarts with our switches (it is single-instance).
   quit_razer_app
 
@@ -64,8 +87,8 @@ fi
 cat <<EOF
 
 Razer Synapse is starting against the local mirror.
-  Request log : $LOG_DIR/mirror.log   (tail -f "$LOG_DIR/mirror.log")
-  Server out  : $SERVER_OUT
+  Request log : $MIRROR_LOGS/mirror.log   (tail -f "$MIRROR_LOGS/mirror.log")
+  Server out  : $MIRROR_LOGS/server.out
   Status      : $ROOT/status.sh
   Stop        : $ROOT/stop.sh            (quit Razer.app + stop the mirror)
   Revert      : $ROOT/stop.sh --stock    (same, then relaunch stock Razer Synapse)

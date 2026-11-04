@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Run by the login agent (the launchd job that enable-login.sh installs); use launch.sh by hand instead.
+# launchd runs the installed copy, "$HOME/Library/Application Support/synapse-unlock-mac/agent.sh", which
+# enable-login.sh syncs from the repo (macOS TCC keeps launchd jobs out of ~/Documents). Every path below is
+# relative to the folder this script is in, so the copy uses its own server.mjs, devices/, certs/ and logs/.
 #   1. Starts server.mjs as a child; its pid goes to logs/server.pid, so status.sh and stop.sh keep working.
 #   2. Waits until the mirror passes mirror_check: AvailableDevices.json lists every device in devices/*.json.
 #   3. Razer.app already running through the mirror: left alone (after a server restart it reconnects by itself).
 #      Running without the mirror switches: quit and relaunched with them. Not running: launched.
 #   4. Waits on the server, so the job lives exactly as long as the mirror and KeepAlive restarts it.
 # SIGTERM (launchctl bootout, kickstart -k) stops the server. Razer.app is never quit on shutdown; stop.sh does that.
-# Output goes to logs/agent.out.
+# Output goes to logs/agent.out (StandardOutPath in the plist); the server's to logs/server.out and logs/mirror.log.
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
