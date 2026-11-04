@@ -454,3 +454,7 @@ the port again. A stand-in is not launchd:
 ---
 
 Reverse-engineered and built with Claude Code (Anthropic) on 2026-11-04; OpenRazer was the protocol reference.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Copyright 2026 Özgür C.
