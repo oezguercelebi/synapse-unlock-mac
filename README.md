@@ -449,7 +449,13 @@ disappears afterwards (reported by `status.sh` and in `agent.out`), and each fai
 served the port (bootstrap error, TCC, copy error, a mirror that never starts); after each one a manual mirror served
 the port again. A stand-in is not launchd:
 
-**Installed-copy login agent under launchd on this Mac: to be verified on this machine.**
+**Installed-copy login agent under real launchd (2026-11-05, this Mac):** `enable-login.sh` from the repo in
+`~/Documents` installed the copy, loaded the agent (`state running`, node `/opt/homebrew/bin/node`) and handed over
+from the manual mirror with Razer.app left running; no `Operation not permitted` in `agent.out`. `kill -9` of the
+mirror → launchd restarted it within 1 s (`runs = 2`, `last exit code = 137`), Razer.app untouched. Simulated login
+(Razer.app quit, `launchctl bootout` + `bootstrap`) → `agent.out`: "mirror is up … Razer.app is not running;
+launching it through the mirror", the new Razer.app carries `--host-rules` and `--ignore-certificate-errors`, and
+39 of its requests reached the mirror within 20 s. `status.sh` exit 0.
 
 ---
 
