@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Report whether the mirror is up and whether Razer.app runs with the mirror switches.
-# Exit 0 when both are true, 1 otherwise.
+# Report whether the mirror is up, whether Razer.app runs with the mirror switches, and the login agent's state.
+# Exit 0 when the mirror is up and Razer.app carries the switches, 1 otherwise (the login agent does not count).
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
@@ -24,7 +24,7 @@ else
 fi
 
 echo "== Razer.app"
-main_line="$(ps -axo pid=,args= | grep -F "$APP_PATTERN" | grep -v -e 'Helper' -e 'grep -F' | head -n1 || true)"
+main_line="$(razer_main_line)"
 if [[ -z "$main_line" ]]; then
   echo "Razer.app       : not running"; rc=1
 else
@@ -35,8 +35,33 @@ else
   check "MAP $HOST 127.0.0.1:$PORT" "maps $HOST to 127.0.0.1:$PORT"
   check "--ignore-certificate-errors" "--ignore-certificate-errors present"
   check "--application-host=$HOST" "--application-host=$HOST"
-  helpers="$(ps -axo args= | grep -F "$APP_TREE_PATTERN" | grep -c -F -- 'host-rules' || true)"
+  helpers="$(ps -axo args= | grep -E "$APP_TREE_PATTERN" | grep -c -F -- 'host-rules' || true)"
   echo "  processes in the Razer.app tree carrying host-rules: $helpers"
+fi
+
+echo "== login agent ($AGENT_LABEL)"
+if agent_enabled; then
+  echo "plist           : $AGENT_PLIST"
+else
+  echo "plist           : none (start at login is off; ./enable-login.sh turns it on)"
+fi
+agent_pid=""
+if agent_loaded; then
+  agent_pid="$(agent_field pid)"
+  exit_code="$(agent_field 'last exit code')"
+  echo "loaded          : yes, state $(agent_field state), pid ${agent_pid:--}, runs $(agent_field runs), last exit code $exit_code"
+  if [[ "$exit_code" == 126 ]]; then
+    echo "  126: launchd could not read agent.sh (macOS privacy protection; see README, Start at login)"
+  fi
+else
+  echo "loaded          : no"
+fi
+if pid="$(server_pid)"; then
+  if [[ -n "$agent_pid" && "$(ps -o ppid= -p "$pid" | tr -d ' ')" == "$agent_pid" ]]; then
+    echo "mirror owner    : login agent (server pid $pid is a child of agent pid $agent_pid)"
+  else
+    echo "mirror owner    : manual (server pid $pid was not started by the login agent)"
+  fi
 fi
 
 echo "== recent requests (logs/mirror.log)"

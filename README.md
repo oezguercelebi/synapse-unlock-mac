@@ -32,12 +32,15 @@ with the rewrites listed below (backend `203-mac`, the default), or from Razer's
 | `server.mjs` | HTTPS mirror on `127.0.0.1:8443`. It uses only Node built-ins and needs no npm install. It is generic: all product knowledge lives in `rules.json`. |
 | `rules.json` | Active rules: the dashboard edits, the 203→153 module route with its rewrites, the lighting route and the `153-win` routes. |
 | `rules.example.json` | Schema example with made-up product ids. Not a patch set. |
-| `launch.sh` | Quits Razer.app, starts the mirror, waits until it serves 153, then launches Razer.app pointed at it. |
-| `stop.sh` | Quits Razer.app and stops the mirror. `--stock` also relaunches stock Synapse. |
-| `status.sh` | Reports whether the mirror is up, whether Razer.app runs with the mirror switches, rewrite warnings, and the last requests. |
-| `lib.sh` | Shell helpers shared by the three scripts. |
+| `launch.sh` | Quits Razer.app, starts the mirror, waits until it serves 153, then launches Razer.app pointed at it. With start at login enabled it restarts the login agent instead. |
+| `stop.sh` | Unloads the login agent if it is loaded, quits Razer.app and stops the mirror. `--stock` also relaunches stock Synapse; `--disable-login` also turns start at login off. |
+| `status.sh` | Reports whether the mirror is up, whether Razer.app runs with the mirror switches, rewrite warnings, the login agent, and the last requests. |
+| `enable-login.sh` | Installs and loads the LaunchAgent that starts the mirror and Razer.app at every login. See [Start at login](#start-at-login). |
+| `disable-login.sh` | Unloads the LaunchAgent and removes its plist. |
+| `agent.sh` | What the LaunchAgent runs: the mirror as a child process, Razer.app through it, restarted by launchd when the server dies. |
+| `lib.sh` | Shell helpers shared by the scripts. |
 | `certs/` | Self-signed certificate for `apps-mac.razer.com`. `server.mjs` creates it with openssl on first start. |
-| `logs/` | `mirror.log` (one line per request), `server.out` (server stdout) and `server.pid`. |
+| `logs/` | `mirror.log` (one line per request), `server.out` (server stdout), `server.pid`, and `agent.out` (LaunchAgent output). |
 
 ## Run, stop, revert
 
@@ -48,10 +51,11 @@ with the rewrites listed below (backend `203-mac`, the default), or from Razer's
 tail -f logs/mirror.log
 ./stop.sh                      # quit Razer.app and stop the mirror
 ./stop.sh --stock              # the same, then relaunch stock Synapse (this is the full revert)
+./enable-login.sh              # start the mirror and Razer.app at every login (see Start at login)
 ```
 
 `MIRROR_DRY_RUN=1 ./launch.sh` starts the mirror and prints the `open` command without launching Razer.app
-(it still quits a running Razer.app first). `MIRROR_PORT` changes the port (default 8443) for all three scripts.
+(it still quits a running Razer.app first). `MIRROR_PORT` changes the port (default 8443) for all scripts.
 
 `launch.sh` runs this command:
 
@@ -70,13 +74,71 @@ first space unless the value is wrapped in quotes. Without the literal quotes, C
 `--host-rules` changes only where Chromium connects. The `Host` header and TLS SNI stay `apps-mac.razer.com`.
 `--ignore-certificate-errors` makes Chromium accept the self-signed certificate.
 
+## Start at login
+
+```bash
+./enable-login.sh       # install and load the LaunchAgent; a running manual mirror is handed over to it
+./disable-login.sh      # unload it and remove the plist
+./status.sh             # "== login agent": plist, loaded, pid, runs, last exit code, who started the server
+tail -f logs/agent.out  # the agent's log
+```
+
+**The folder must not be inside `~/Documents`, `~/Desktop`, `~/Downloads` or iCloud Drive.** macOS privacy
+protection (TCC) does not let launchd jobs read those folders: `agent.sh` fails with "Operation not permitted"
+(launchd shows last exit code 126). `enable-login.sh` detects this. It then unloads the agent, removes the plist,
+restarts the manual mirror it had stopped, and exits 1. Either move the folder somewhere else, or add `/bin/bash` under
+System Settings > Privacy & Security > Full Disk Access. The second option gives every launchd job that runs
+`/bin/bash` full disk access.
+
+`enable-login.sh` writes `~/Library/LaunchAgents/com.example.synapse-basilisk-v3-mirror.plist` and loads it
+into `gui/<uid>` with `launchctl bootstrap`. The job runs `/bin/bash agent.sh` with `RunAtLoad`, `KeepAlive`,
+`ThrottleInterval` 10, and stdout and stderr in `logs/agent.out`. launchd's `PATH` is only `/usr/bin:/bin:/usr/sbin:/sbin`,
+so the plist puts the directory of the real node binary first. That binary is the `node` in your shell's `PATH` (or
+`MIRROR_NODE`), resolved when you run `enable-login.sh`, because version-manager links such as fnm's per-shell ones
+do not exist for launchd. After switching node versions, run `enable-login.sh` again. `MIRROR_PORT` goes into the
+plist too.
+
+`agent.sh` does the following:
+
+1. It starts `server.mjs` as its child and writes the server's pid to `logs/server.pid`.
+2. It waits until the mirror serves productId 153. If upstream is unreachable at login, it keeps waiting.
+3. It checks Razer.app:
+   - already running through the mirror: left alone;
+   - running without the mirror switches (for example, started by the stock launcher): quit and relaunched with them;
+   - not running: launched.
+4. It waits on the server, so the job lives exactly as long as the mirror.
+
+If the server dies, launchd restarts the job. Razer.app already points at `127.0.0.1:8443`, so it is not restarted:
+its next request reaches the new server. On SIGTERM (`launchctl bootout`, `kickstart -k`) the agent stops the server
+and leaves Razer.app running.
+
+With start at login enabled:
+
+| Script | Behaviour |
+|---|---|
+| `enable-login.sh` | Idempotent. A loaded agent is reloaded. A manual mirror from `launch.sh` is stopped and the agent starts its own. Razer.app keeps running (same pid). |
+| `launch.sh` | Does not start a second server. It runs `launchctl kickstart -k` on the agent, or `launchctl bootstrap` if `stop.sh` unloaded it. It refuses `--backend`, `MIRROR_BACKEND` and `MIRROR_DRY_RUN`, because the agent uses the backend in `rules.json`. |
+| `stop.sh` | Unloads the agent first (otherwise KeepAlive would restart the server), then quits Razer.app and stops the mirror. The plist stays, so everything comes back at the next login or with `launch.sh`. `--disable-login` also removes the plist. |
+| `disable-login.sh` | Idempotent. Unloads the agent and removes the plist. Razer.app is left alone. The mirror stops with the agent and is started again as a manual mirror, so a running Razer.app keeps working. |
+
+With start at login enabled, the full revert is `./stop.sh --stock --disable-login`.
+
+Nothing else starts Synapse at login: on 2026-11-04, Razer's only background items were the Elevation Service and
+UninstallerWatcher daemons and the `com.razer.gms` agent. The agent starts only the mirror and Razer.app. The dexts,
+the Elevation Service, GameManagerService and RzEngineMon are not touched: RzEngineMon exits and returns with Razer.app
+on its own.
+
 ## Nothing Razer-owned is modified
 
 - No file under `/Applications`, `/Library`, `~/Library/Razer` or `~/Library/Application Support/Razer` is written.
 - The dexts, the Elevation Service and the GameManagerService are never touched. The scripts only quit and launch
-  Razer.app (`com.razer.appengine.app`).
+  Razer.app (`com.razer.appengine.app`). Their process patterns are anchored at Razer.app's executable path
+  (`Contents/MacOS/Razer` and `Contents/Frameworks/`). This keeps the SIGTERM fallback away from RzEngineMon
+  (`Contents/CommonDylib`) and from any process whose arguments merely mention the path.
 - Nothing persists: Razer.app saves only `applicationHost`/`launchApps` on quit, and those values are unchanged.
-  A normal launch through `/Applications/Razer/Razer Synapse.app` uses the real server again.
+  A normal launch through `/Applications/Razer/Razer Synapse.app` uses the real server again. Start at login adds
+  one file outside this folder, `~/Library/LaunchAgents/com.example.synapse-basilisk-v3-mirror.plist`;
+  `disable-login.sh` removes it.
 - One leftover: the service worker caches the device lists ("DeviceDataJson") stale-first, and Chromium caches what
   it fetched. The first stock launch after a revert may still show the mirrored list. It corrects itself after the
   background revalidation, usually by the next launch. For the same reason, the first mirrored launch may still
