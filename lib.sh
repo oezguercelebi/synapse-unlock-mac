@@ -16,7 +16,7 @@ APP_TREE_PATTERN="$APP_RE/(MacOS/Razer( |\$)|Frameworks/)"  # main + its helpers
 STOCK_LAUNCHER="/Applications/Razer/Razer Synapse.app"
 HOST="apps-mac.razer.com"
 # Start at login (enable-login.sh): a user LaunchAgent that runs agent.sh.
-AGENT_LABEL="com.example.synapse-basilisk-v3-mirror"
+AGENT_LABEL="com.synapse-unlock-mac.agent"
 AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
 AGENT_DOMAIN="gui/$(id -u)"
 AGENT_OUT="$LOG_DIR/agent.out"

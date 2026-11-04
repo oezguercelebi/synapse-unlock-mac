@@ -1,4 +1,4 @@
-# Basilisk V3 in Razer Synapse for macOS (local mirror)
+# synapse-unlock-mac: the Basilisk V3 in Razer Synapse for macOS (local mirror)
 
 Razer Synapse for macOS does not support the wired **Razer Basilisk V3** (USB `1532:0099`, product id **153**).
 This folder makes Synapse treat it as supported, without changing any Razer file. A small local HTTPS server
@@ -90,7 +90,7 @@ restarts the manual mirror it had stopped, and exits 1. Either move the folder s
 System Settings > Privacy & Security > Full Disk Access. The second option gives every launchd job that runs
 `/bin/bash` full disk access.
 
-`enable-login.sh` writes `~/Library/LaunchAgents/com.example.synapse-basilisk-v3-mirror.plist` and loads it
+`enable-login.sh` writes `~/Library/LaunchAgents/com.synapse-unlock-mac.agent.plist` and loads it
 into `gui/<uid>` with `launchctl bootstrap`. The job runs `/bin/bash agent.sh` with `RunAtLoad`, `KeepAlive`,
 `ThrottleInterval` 10, and stdout and stderr in `logs/agent.out`. launchd's `PATH` is only `/usr/bin:/bin:/usr/sbin:/sbin`,
 so the plist puts the directory of the real node binary first. That binary is the `node` in your shell's `PATH` (or
@@ -137,7 +137,7 @@ on its own.
   (`Contents/CommonDylib`) and from any process whose arguments merely mention the path.
 - Nothing persists: Razer.app saves only `applicationHost`/`launchApps` on quit, and those values are unchanged.
   A normal launch through `/Applications/Razer/Razer Synapse.app` uses the real server again. Start at login adds
-  one file outside this folder, `~/Library/LaunchAgents/com.example.synapse-basilisk-v3-mirror.plist`;
+  one file outside this folder, `~/Library/LaunchAgents/com.synapse-unlock-mac.agent.plist`;
   `disable-login.sh` removes it.
 - One leftover: the service worker caches the device lists ("DeviceDataJson") stale-first, and Chromium caches what
   it fetched. The first stock launch after a revert may still show the mirrored list. It corrects itself after the
