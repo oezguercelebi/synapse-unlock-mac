@@ -263,28 +263,43 @@ stop_server() {
 install_present() { [[ -f "$INSTALL_DIR/agent.sh" && -f "$INSTALL_DIR/lib.sh" && -f "$INSTALL_DIR/server.mjs" && -d "$INSTALL_DIR/devices" ]]; }
 
 # Copy the runtime files from this folder (the repo) to $INSTALL_DIR: $INSTALL_FILES and devices/ (files removed from
-# devices/ are removed there too). The copy's certs/ and logs/ are its own and are kept. rsync replaces each file
-# through a new inode, so a bash that is still reading the old agent.sh is not disturbed.
+# devices/ are removed there too), then check that the copy matches the repo (install_current). The copy's certs/ and
+# logs/ are its own and are kept. rsync replaces each file through a new inode, so a bash that is still reading the
+# old agent.sh is not disturbed. Every step's status is checked explicitly: callers use 'if ! install_sync', where
+# errexit does not apply inside the function. Returns non-zero, with a message on stderr, when anything failed.
 install_sync() {
   if [[ "$ROOT" == "$INSTALL_DIR" ]]; then echo "ERROR: run this from the repo, not from the installed copy." >&2; return 1; fi
-  local f files=()
+  local f rc=0 files=()
   for f in $INSTALL_FILES; do files+=("$ROOT/$f"); done
-  mkdir -p "$INSTALL_DIR/logs" "$INSTALL_DIR/devices"
-  rsync -a "${files[@]}" "$INSTALL_DIR/"
-  rsync -a --delete "$ROOT/devices/" "$INSTALL_DIR/devices/"
-  local commit dirty=""
-  commit="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  # shellcheck disable=SC2086
-  git -C "$ROOT" diff --quiet HEAD -- $INSTALL_FILES devices 2>/dev/null || dirty=" plus uncommitted changes"
-  printf 'source=%s\ncommit=%s%s\nsynced=%s\n' "$ROOT" "$commit" "$dirty" "$(date '+%Y-%m-%d %H:%M:%S')" >"$INSTALL_DIR/.install-info"
+  mkdir -p "$INSTALL_DIR/logs" "$INSTALL_DIR/devices" || { echo "ERROR: cannot create $INSTALL_DIR." >&2; return 1; }
+  rsync -a "${files[@]}" "$INSTALL_DIR/" || rc=$?
+  if [[ "$rc" != 0 ]]; then echo "ERROR: copying $INSTALL_FILES to $INSTALL_DIR failed (rsync exit $rc)." >&2; return "$rc"; fi
+  rsync -a --delete "$ROOT/devices/" "$INSTALL_DIR/devices/" || rc=$?
+  if [[ "$rc" != 0 ]]; then echo "ERROR: copying devices/ to $INSTALL_DIR failed (rsync exit $rc)." >&2; return "$rc"; fi
+  if ! install_current; then
+    echo "ERROR: after the copy, $INSTALL_DIR does not match this repo:" >&2
+    for f in $INSTALL_FILES; do cmp -s "$ROOT/$f" "$INSTALL_DIR/$f" || echo "  $f differs or is missing" >&2; done
+    diff -rq -x '.*' "$ROOT/devices" "$INSTALL_DIR/devices" >&2 || true
+    return 1
+  fi
+  # The commit is informational. A ZIP download has no .git, and on a Mac without the Command Line Tools /usr/bin/git
+  # would offer to install them, so git only runs in a git checkout and only if it works.
+  local commit="unknown (not a git checkout)" dirty=""
+  if [[ -e "$ROOT/.git" ]] && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    commit="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    # shellcheck disable=SC2086
+    git -C "$ROOT" diff --quiet HEAD -- $INSTALL_FILES devices 2>/dev/null || dirty=" plus uncommitted changes"
+  fi
+  printf 'source=%s\ncommit=%s%s\nsynced=%s\n' "$ROOT" "$commit" "$dirty" "$(date '+%Y-%m-%d %H:%M:%S')" >"$INSTALL_DIR/.install-info" \
+    || { echo "ERROR: cannot write $INSTALL_DIR/.install-info." >&2; return 1; }
 }
 
-# True when $INSTALL_DIR holds the same runtime files as this folder.
+# True when $INSTALL_DIR holds the same runtime files as this folder. Dotfiles (a Finder .DS_Store) are ignored.
 install_current() {
   local f
   install_present || return 1
   for f in $INSTALL_FILES; do cmp -s "$ROOT/$f" "$INSTALL_DIR/$f" || return 1; done
-  diff -rq "$ROOT/devices" "$INSTALL_DIR/devices" >/dev/null 2>&1
+  diff -rq -x '.*' "$ROOT/devices" "$INSTALL_DIR/devices" >/dev/null 2>&1
 }
 
 # Remove $INSTALL_DIR (runtime files, certs, logs). Only from the repo.
