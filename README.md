@@ -51,7 +51,7 @@ Your device is not here? See [Add your own device](#add-your-own-device).
 | `server.mjs` | HTTPS mirror of `apps-mac.razer.com` on `127.0.0.1:8443`. Node built-ins only. Generic: all product knowledge lives in `devices/*.json`. |
 | `devices/basilisk-v3.json` | The Basilisk V3 device file: dashboard edits, the 203→153 module route with its rewrites, the lighting route and the `153-win` routes. |
 | `devices/_template.json` | Every key of a device file, explained next to the key. Not loaded (files starting with `_` are skipped). |
-| `launch.sh` | Quits Razer.app, starts a manual mirror from this folder, waits until it lists every device, launches Razer.app pointed at it. With start at login enabled it restarts the login agent instead. |
+| `launch.sh` | Quits Razer.app, starts a manual mirror from this folder, waits until it lists every device it loaded (and prints any device file it could not load), launches Razer.app pointed at it. With start at login enabled it restarts the login agent instead. |
 | `stop.sh` | Unloads the login agent if it is loaded, quits Razer.app, stops the mirror. `--stock` relaunches stock Synapse; `--disable-login` also turns start at login off. |
 | `status.sh` | Who owns port 8443, the mirror's status and rewrite warnings, whether Razer.app carries the switches, the login agent, the last requests. |
 | `enable-login.sh`, `disable-login.sh`, `agent.sh` | Start at login: install, remove, and the script launchd runs. See [Start at login](#start-at-login). |
@@ -203,7 +203,9 @@ without starting anything.
 
 One JSON file per device in `devices/`. `server.mjs` loads every `devices/*.json` except `_*.json` and merges them:
 dashboard edits and routes are concatenated in file-name order, each file is hot-reloaded on its own, and a broken
-file keeps its previous version and shows up under `errors` in `status.sh`. A device's routes only match its own
+file keeps its previous version and shows up under `errors` in `status.sh`. A file that has never loaded (bad JSON, a
+bad regex) is not served, so its device stays unavailable while the others keep working; `launch.sh`, the login agent
+and `status.sh` print its error instead of waiting for its device. A device's routes only match its own
 `/synapse/products/<pid>/` paths, so loading every device file is harmless even if you own only one of the devices.
 [`devices/_template.json`](devices/_template.json) explains every key; the shape is:
 
@@ -285,8 +287,9 @@ links such as fnm's per-shell ones do not exist for launchd. After switching nod
 `MIRROR_PORT` goes into the plist too. If anything fails (copy, bootstrap, or the TCC check, which stays as a
 fallback), the agent is unloaded, the plist removed and the manual mirror restarted.
 
-`agent.sh` starts `server.mjs` as its child, waits until `AvailableDevices.json` lists every device (it keeps waiting
-if upstream is unreachable at login), and then checks Razer.app: already running through the mirror, it is left alone;
+`agent.sh` starts `server.mjs` as its child, waits until `AvailableDevices.json` lists every device the server loaded
+(it keeps waiting if upstream is unreachable at login, and logs any device file it could not load), and then checks
+Razer.app: already running through the mirror, it is left alone;
 running without the switches (started by the stock launcher, say), it is quit and relaunched with them; not running,
 it is launched. The agent then waits on the server, so the job lives exactly as long as the mirror. If the server
 dies, launchd restarts the job and Razer.app, which already points at `127.0.0.1:8443`, reconnects by itself. On

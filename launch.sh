@@ -45,11 +45,13 @@ if agent_enabled; then
     launchctl bootstrap "$AGENT_DOMAIN" "$AGENT_PLIST"
   fi
   if ! pid="$(wait_for_agent_server "$old" "$offset")"; then
-    echo "ERROR: the login agent did not bring the mirror up within 30 s. Last agent output:" >&2
+    echo "ERROR: the login agent did not bring the mirror up within 30 s ($(mirror_missing || true)). Last agent output:" >&2
     tail -n 20 "$AGENT_OUT" >&2 || true
+    warn_mirror_errors
     exit 1
   fi
-  echo "Mirror is up under the login agent (pid $pid); AvailableDevices.json lists $(declared_label "$INSTALL_DIR/devices")."
+  echo "Mirror is up under the login agent (pid $pid); AvailableDevices.json lists $(served_label)."
+  warn_mirror_errors
   echo "The agent launches Razer.app unless it already runs through the mirror (log: $AGENT_OUT)."
   if ! install_current; then
     echo "Note: the installed copy differs from this repo (a git pull or a change under devices/?);"
@@ -75,10 +77,12 @@ else
   if ! wait_for_mirror "$SERVER_CHILD"; then
     echo "ERROR: mirror did not come up ($(mirror_missing || true)). Last server output:" >&2
     tail -n 20 "$SERVER_OUT" >&2 || true
+    warn_mirror_errors
     stop_server >/dev/null || true
     exit 1
   fi
-  echo "Mirror is up (pid $SERVER_CHILD); AvailableDevices.json lists $(declared_label)."
+  echo "Mirror is up (pid $SERVER_CHILD); AvailableDevices.json lists $(served_label)."
+  warn_mirror_errors
 
   # 3. Launch Razer.app with the stock launcher's switches plus host-rules (launch_razer_app in lib.sh).
   launch_razer_app

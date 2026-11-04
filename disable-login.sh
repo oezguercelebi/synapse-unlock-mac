@@ -44,6 +44,7 @@ if [[ "$restart" == 1 ]]; then
     exit 1
   fi
   echo "Manual mirror is up (pid $SERVER_CHILD, logs in $LOG_DIR); ./stop.sh stops it, ./stop.sh --stock reverts."
+  warn_mirror_errors
 fi
 line="$(razer_main_line)"
 if [[ -n "$line" ]]; then

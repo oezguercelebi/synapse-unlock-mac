@@ -8,7 +8,7 @@
   ],
 
   "device": {
-    "_device": "Who this file is for. lib.sh (mirror_check, used by launch.sh, agent.sh and status.sh) waits until /synapse/dashboard/AvailableDevices.json lists device.productId of every device file.",
+    "_device": "Who this file is for. lib.sh (mirror_check, used by launch.sh, agent.sh and status.sh) waits until /synapse/dashboard/AvailableDevices.json lists device.productId of every device file the server loaded (the productIds of /__mirror/status). A file the server cannot load is not waited for: launch.sh, agent.sh and status.sh print its error.",
     "name": "Razer Example Mouse",
     "_name": "Display name, for status output and the README. The name Synapse shows comes from the module (rewrite it there).",
     "productId": 900,

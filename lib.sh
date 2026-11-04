@@ -131,55 +131,79 @@ port_owner() {
   else echo "other $pid"; fi
 }
 
-# productIds declared by the device files in $1 (default: this folder's devices/), space-separated: device.productId
-# of every *.json except _*.json, the files server.mjs loads. With MIRROR_RULES set, the server loads only that file,
-# so only it is read. A file that does not parse declares nothing here; the server lists it under "errors".
-declared_pids() {
+# GET a path from the mirror on $PORT (Host and SNI $HOST, certificate not checked).
+mirror_get() { curl -sk --fail --max-time 5 --resolve "$HOST:$PORT:127.0.0.1" "https://$HOST:$PORT$1"; }
+
+# Field $1 of the /__mirror/status JSON on stdin, one value per line (an array gives one line per element; a missing
+# field, or input that is not JSON, gives nothing). Fails only when node does not run.
+status_field() {
   node -e '
-    const fs = require("fs"), path = require("path");
-    const [dir, only] = process.argv.slice(1);
-    let files = [];
-    try {
-      files = only ? [only] : fs.readdirSync(dir).filter((f) => f.endsWith(".json") && !/^[_.]/.test(f)).sort().map((f) => path.join(dir, f));
-    } catch {}
-    const pids = [];
-    for (const f of files) {
-      try { const p = JSON.parse(fs.readFileSync(f, "utf8")).device?.productId; if (Number.isInteger(p)) pids.push(p); } catch {}
-    }
-    console.log(pids.join(" "));
-  ' "${1:-$DEVICES_DIR}" "${MIRROR_RULES:-}"
+    let s = "";
+    process.stdin.setEncoding("utf8").on("data", (c) => (s += c)).on("end", () => {
+      let v;
+      try { v = JSON.parse(s)[process.argv[1]]; } catch { return; }
+      for (const x of Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]) console.log(String(x));
+    });
+  ' "$1"
 }
 
-# "productId 153" / "productIds 153, 900" for messages ($1: devices dir as for declared_pids).
-declared_label() {
+# "productId 153" / "productIds 153, 900": the productIds the mirror on $PORT has loaded, for messages.
+served_label() {
   local p
-  p="$(declared_pids "${1:-}")"
+  p="$(mirror_get /__mirror/status 2>/dev/null | status_field productIds | paste -sd ' ' - || true)"
   case "$p" in
-    "") echo "no device productId (no devices/*.json declares one)" ;;
+    "") echo "no device (the mirror loaded no device file)" ;;
     *" "*) echo "productIds ${p// /, }" ;;
     *) echo "productId $p" ;;
   esac
 }
 
-# GET a path from the mirror on $PORT (Host and SNI $HOST, certificate not checked).
-mirror_get() { curl -sk --fail --max-time 5 --resolve "$HOST:$PORT:127.0.0.1" "https://$HOST:$PORT$1"; }
+# The device-file errors the mirror on $PORT reports ("errors" of /__mirror/status), one per line, or nothing.
+mirror_errors() {
+  local status
+  status="$(mirror_get /__mirror/status 2>/dev/null)" || return 0
+  printf '%s' "$status" | status_field errors || true
+}
 
-# Prints what keeps the mirror from being ready, or nothing: "no answer on /__mirror/status", or the declared
-# productIds (devices dir $1, default this folder's) that AvailableDevices.json does not list. Returns 1 when not ready.
+# Prints the mirror's device-file errors loudly on stderr, or nothing. The scripts do not wait for a device whose file
+# the server could not load (mirror_missing), so this is where such a file shows up.
+warn_mirror_errors() {
+  local errs
+  errs="$(mirror_errors)"
+  [[ -n "$errs" ]] || return 0
+  {
+    echo "!! The mirror reports device-file errors. A file marked '(not loaded)' is NOT served: its device stays unavailable."
+    printf '%s\n' "$errs" | sed 's/^/!!   /'
+    echo "!! Fix it in the repo's devices/ and check with: node server.mjs --check (a manual mirror reloads it by itself;"
+    echo "!! the login agent's copy after ./enable-login.sh)."
+  } >&2
+}
+
+# Prints what keeps the mirror on $PORT from being ready, or nothing; returns 1 when not ready. Ready: /__mirror/status
+# answers, the server loaded at least one device file, and AvailableDevices.json lists the productId of every device
+# file the server loaded ("productIds" of /__mirror/status). A file the server could not load (bad JSON, a bad regex)
+# is not waited for: it is listed under "errors", which the scripts print (warn_mirror_errors, status.sh).
 mirror_missing() {
-  local status list pid re missing=""
+  local status pids errs="" e list pid re missing=""
   status="$(mirror_get /__mirror/status 2>/dev/null)" || status=""
   if [[ "$status" != *'"ok": true'* ]]; then echo "no answer on /__mirror/status"; return 1; fi
-  list="$(mirror_get "/synapse/dashboard/AvailableDevices.json?d=$(date +%s)" 2>/dev/null)" || list=""
-  for pid in $(declared_pids "${1:-}"); do
+  if ! pids="$(printf '%s' "$status" | status_field productIds)"; then echo "cannot read /__mirror/status (node not found in PATH?)"; return 1; fi
+  if [[ -z "$pids" ]]; then
+    while IFS= read -r e; do errs="${errs:+$errs; }$e"; done < <(printf '%s' "$status" | status_field errors || true)
+    echo "the mirror loaded no device file${errs:+ (errors: $errs)}"; return 1
+  fi
+  if ! list="$(mirror_get "/synapse/dashboard/AvailableDevices.json?d=$(date +%s)" 2>/dev/null)"; then
+    echo "AvailableDevices.json did not load (upstream unreachable?)"; return 1
+  fi
+  for pid in $pids; do
     re="\"productId\":[[:space:]]*${pid}[^0-9]"
     [[ "$list" =~ $re ]] || missing="${missing:+$missing }$pid"
   done
   if [[ -n "$missing" ]]; then echo "AvailableDevices.json lacks productId $missing"; return 1; fi
 }
 
-# True when the mirror answers /__mirror/status and AvailableDevices.json lists every declared productId.
-mirror_check() { mirror_missing "${1:-}" >/dev/null; }
+# True when the mirror on $PORT is ready (see mirror_missing).
+mirror_check() { mirror_missing >/dev/null; }
 
 # Start this copy's server.mjs in the background (backend $BACKEND when set) and record its pid in $PIDFILE and
 # $SERVER_CHILD. Fails when another process listens on the port.
@@ -296,12 +320,12 @@ agent_bootout() {
 }
 
 # After a bootstrap or kickstart: wait up to 30 s until an installed-copy server other than pid $1 passes
-# mirror_check against the installed devices/, and print its pid. $2 is the size of agent.out before the (re)start.
+# mirror_check, and print its pid. $2 is the size of agent.out before the (re)start.
 # Returns 1 on timeout, 2 when agent.out shows that launchd may not read the installed copy (see tcc_hint).
 wait_for_agent_server() {
   local old="$1" offset="$2" pid i
   for i in $(seq 1 120); do
-    if pid="$(agent_server_pid)" && [[ "$pid" != "$old" ]] && mirror_check "$INSTALL_DIR/devices"; then
+    if pid="$(agent_server_pid)" && [[ "$pid" != "$old" ]] && mirror_check; then
       echo "$pid"; return 0
     fi
     if tail -c +$((offset + 1)) "$AGENT_OUT" 2>/dev/null | grep -q 'Operation not permitted'; then return 2; fi

@@ -2,7 +2,7 @@
 # Report who serves the mirror on the port (a manual mirror from this repo, or the login agent running the installed
 # copy in ~/Library/Application Support/synapse-unlock-mac), whether it lists every device, whether Razer.app runs
 # with the mirror switches, and the login agent's state.
-# Exit 0 when one of our mirrors is up, lists every declared device, has no device-file errors, and Razer.app carries
+# Exit 0 when one of our mirrors is up, lists every device it loaded, has no device-file errors, and Razer.app carries
 # the switches; 1 otherwise. The login agent's own state does not count.
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -23,15 +23,18 @@ if pid="$(agent_server_pid)"; then echo "agent (install) : running, pid $pid (lo
 status_json="$(mirror_get /__mirror/status 2>/dev/null || true)"
 if [[ -n "$status_json" ]]; then
   echo "$status_json" | sed 's/^/  /'
-  if [[ "$status_json" != *'"errors": []'* ]]; then echo "device files    : ERRORS (see \"errors\" above)"; rc=1; fi
+  if [[ "$status_json" != *'"errors": []'* ]]; then
+    echo "device files    : ERRORS. A file marked '(not loaded)' is NOT served: its device stays unavailable."
+    printf '%s' "$status_json" | status_field errors | sed 's/^/  !! /' || true
+    rc=1
+  fi
 else
   echo "status endpoint : no answer on 127.0.0.1:$PORT"; rc=1
 fi
-devices="${serving_root:-$ROOT}/devices"
-if mirror_check "$devices"; then
-  echo "dashboard check : AvailableDevices.json lists $(declared_label "$devices")"
+if mirror_check; then
+  echo "dashboard check : AvailableDevices.json lists $(served_label)"
 else
-  echo "dashboard check : FAILED ($(mirror_missing "$devices" || true))"; rc=1
+  echo "dashboard check : FAILED ($(mirror_missing || true))"; rc=1
 fi
 
 echo "== Razer.app"

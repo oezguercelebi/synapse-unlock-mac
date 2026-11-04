@@ -4,7 +4,8 @@
 # enable-login.sh syncs from the repo (macOS TCC keeps launchd jobs out of ~/Documents). Every path below is
 # relative to the folder this script is in, so the copy uses its own server.mjs, devices/, certs/ and logs/.
 #   1. Starts server.mjs as a child; its pid goes to logs/server.pid, so status.sh and stop.sh keep working.
-#   2. Waits until the mirror passes mirror_check: AvailableDevices.json lists every device in devices/*.json.
+#   2. Waits until the mirror passes mirror_check: AvailableDevices.json lists every device file the server loaded.
+#      A file the server could not load is not waited for; its error is logged here.
 #   3. Razer.app already running through the mirror: left alone (after a server restart it reconnects by itself).
 #      Running without the mirror switches: quit and relaunched with them. Not running: launched.
 #   4. Waits on the server, so the job lives exactly as long as the mirror and KeepAlive restarts it.
@@ -37,13 +38,14 @@ start_server
 
 until wait_for_mirror "$SERVER_CHILD" 120; do
   if ! kill -0 "$SERVER_CHILD" 2>/dev/null; then
-    log "ERROR: the mirror server exited before serving $(declared_label). Last server output:"
+    log "ERROR: the mirror server exited before it was ready. Last server output:"
     tail -n 20 "$SERVER_OUT" || true
     exit 1
   fi
-  log "mirror not ready yet ($(mirror_missing || true); upstream unreachable?); still waiting."
+  log "mirror not ready yet ($(mirror_missing || true)); still waiting."
 done
-log "mirror is up (server pid $SERVER_CHILD); AvailableDevices.json lists $(declared_label)."
+log "mirror is up (server pid $SERVER_CHILD); AvailableDevices.json lists $(served_label)."
+warn_mirror_errors 2>&1 | while IFS= read -r line; do log "$line"; done
 
 line="$(razer_main_line)"
 if [[ -z "$line" ]]; then
