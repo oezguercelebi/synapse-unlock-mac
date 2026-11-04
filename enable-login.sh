@@ -96,7 +96,7 @@ if [[ "$rc" == 2 ]]; then
   fi
   exit 1
 elif [[ "$rc" != 0 ]]; then
-  echo "WARNING: the agent's mirror does not serve productId 153 after 30 s; the agent keeps waiting. Last agent output:" >&2
+  echo "WARNING: the agent's mirror is not ready after 30 s ($(mirror_missing || true)); the agent keeps waiting. Last agent output:" >&2
   tail -n 20 "$AGENT_OUT" >&2 || true
 else
   echo "Mirror is up under the login agent (server pid $pid)."

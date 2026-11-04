@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start the local apps-mac.razer.com mirror and launch Razer.app (RazerAppEngine) pointed at it.
-# Usage: ./launch.sh [--backend 203-mac|153-win]
+# Usage: ./launch.sh [--backend NAME]   (a backend of a device file, e.g. 153-win for devices/basilisk-v3.json)
 # Env:   MIRROR_PORT (8443), MIRROR_BACKEND, MIRROR_DRY_RUN=1 (start the mirror, print the open command, do not launch)
 # With start at login enabled (enable-login.sh) launchd owns the mirror: this restarts the login agent instead of
 # starting a second server, and the agent launches Razer.app unless it already runs through the mirror.
@@ -22,7 +22,7 @@ command -v node >/dev/null || { echo "node not found in PATH" >&2; exit 1; }
 if agent_enabled; then
   if [[ -n "$BACKEND" || "${MIRROR_DRY_RUN:-0}" == 1 ]]; then
     echo "ERROR: start at login is enabled; --backend, MIRROR_BACKEND and MIRROR_DRY_RUN apply to a manual mirror only." >&2
-    echo "The login agent uses the backend in rules.json. Run ./disable-login.sh first to use them." >&2
+    echo "The login agent uses the backends set in the device files (devices/*.json). Run ./disable-login.sh first to use them." >&2
     exit 2
   fi
   old="$(server_pid || true)"
@@ -39,7 +39,7 @@ if agent_enabled; then
     tail -n 20 "$AGENT_OUT" >&2 || true
     exit 1
   fi
-  echo "Mirror is up under the login agent (pid $pid); AvailableDevices.json lists productId 153."
+  echo "Mirror is up under the login agent (pid $pid); AvailableDevices.json lists $(declared_label)."
   echo "The agent launches Razer.app unless it already runs through the mirror (log: $AGENT_OUT)."
 else
   # 1. Quit a running Razer.app so it restarts with our switches (it is single-instance).
@@ -49,12 +49,12 @@ else
   stop_server >/dev/null
   start_server
   if ! wait_for_mirror "$SERVER_CHILD"; then
-    echo "ERROR: mirror did not come up (or AvailableDevices.json lacks productId 153). Last server output:" >&2
+    echo "ERROR: mirror did not come up ($(mirror_missing || true)). Last server output:" >&2
     tail -n 20 "$SERVER_OUT" >&2 || true
     stop_server >/dev/null || true
     exit 1
   fi
-  echo "Mirror is up (pid $SERVER_CHILD); AvailableDevices.json lists productId 153."
+  echo "Mirror is up (pid $SERVER_CHILD); AvailableDevices.json lists $(declared_label)."
 
   # 3. Launch Razer.app with the stock launcher's switches plus host-rules (launch_razer_app in lib.sh).
   launch_razer_app

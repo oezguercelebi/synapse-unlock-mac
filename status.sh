@@ -18,9 +18,9 @@ else
   echo "status endpoint : no answer on 127.0.0.1:$PORT"; rc=1
 fi
 if mirror_check; then
-  echo "dashboard check : AvailableDevices.json lists productId 153"
+  echo "dashboard check : AvailableDevices.json lists $(declared_label)"
 else
-  echo "dashboard check : FAILED"; rc=1
+  echo "dashboard check : FAILED ($(mirror_missing || true))"; rc=1
 fi
 
 echo "== Razer.app"

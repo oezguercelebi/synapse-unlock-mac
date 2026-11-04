@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run by the login agent (the launchd job that enable-login.sh installs); use launch.sh by hand instead.
 #   1. Starts server.mjs as a child; its pid goes to logs/server.pid, so status.sh and stop.sh keep working.
-#   2. Waits until the mirror serves productId 153.
+#   2. Waits until the mirror passes mirror_check: AvailableDevices.json lists every device in devices/*.json.
 #   3. Razer.app already running through the mirror: left alone (after a server restart it reconnects by itself).
 #      Running without the mirror switches: quit and relaunched with them. Not running: launched.
 #   4. Waits on the server, so the job lives exactly as long as the mirror and KeepAlive restarts it.
@@ -34,13 +34,13 @@ start_server
 
 until wait_for_mirror "$SERVER_CHILD" 120; do
   if ! kill -0 "$SERVER_CHILD" 2>/dev/null; then
-    log "ERROR: the mirror server exited before serving productId 153. Last server output:"
+    log "ERROR: the mirror server exited before serving $(declared_label). Last server output:"
     tail -n 20 "$SERVER_OUT" || true
     exit 1
   fi
-  log "the mirror does not serve productId 153 yet (upstream unreachable?); still waiting."
+  log "mirror not ready yet ($(mirror_missing || true); upstream unreachable?); still waiting."
 done
-log "mirror is up (server pid $SERVER_CHILD); AvailableDevices.json lists productId 153."
+log "mirror is up (server pid $SERVER_CHILD); AvailableDevices.json lists $(declared_label)."
 
 line="$(razer_main_line)"
 if [[ -z "$line" ]]; then

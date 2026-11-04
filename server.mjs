@@ -5,12 +5,19 @@
 // and --ignore-certificate-errors, so every request it makes to apps-mac.razer.com lands here.
 // Node itself resolves apps-mac.razer.com normally, so this server forwards to the real CDN.
 //
-// Everything is passed through untouched except what rules.json says (see README.md):
+// Everything is passed through untouched except what the device files say (devices/*.json, see README.md):
 //   jsonEdits  - structural edits of JSON arrays/objects (dashboard device lists, installer manifests)
 //   routes     - path routing (regex -> upstream host + path, plus pathRewrite) with optional text
 //                rewrites (counted against 'expect', refused with 502 when a 'required' one misses),
-//                filtered by the active backend ("203-mac" | "153-win" | anything you name)
-// Product knowledge lives in rules.json; this file stays generic.
+//                filtered by the device's active backend ("203-mac" | "153-win" | anything you name)
+// Every devices/*.json except _*.json is loaded and merged: jsonEdits and routes are concatenated in file-name
+// order. Each file is hot-reloaded on its own; a broken file keeps its previous rules and is listed in
+// /__mirror/status. Product knowledge lives in the device files; this file stays generic.
+//
+// Options: --port N (MIRROR_PORT, 8443), --bind ADDR (MIRROR_BIND, 127.0.0.1),
+//   --backend NAME (MIRROR_BACKEND): use backend NAME for every device file that has one by that name,
+//   --rules FILE (MIRROR_RULES): developer override, load only FILE instead of devices/*.json,
+//   --check: load and validate the device files, print a summary, exit 0 (all good) or 1; no server, no log.
 //
 // Zero dependencies: Node >= 20 built-ins only.
 
@@ -28,8 +35,12 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ARGS = parseArgs(process.argv.slice(2));
 const PORT = Number(ARGS.port ?? process.env.MIRROR_PORT ?? 8443);
 const BIND = String(ARGS.bind ?? process.env.MIRROR_BIND ?? '127.0.0.1');
-const RULES_PATH = path.resolve(String(ARGS.rules ?? process.env.MIRROR_RULES ?? path.join(ROOT, 'rules.json')));
-const BACKEND_OVERRIDE = ARGS.backend ?? process.env.MIRROR_BACKEND ?? null;
+const DEVICES_DIR = path.join(ROOT, 'devices');
+const RULES_OVERRIDE = ARGS.rules ?? process.env.MIRROR_RULES ?? null;
+const RULES_PATH = RULES_OVERRIDE ? path.resolve(String(RULES_OVERRIDE)) : null; // null: devices/*.json
+const RULES_SOURCE = RULES_PATH ?? DEVICES_DIR;
+const BACKEND_OVERRIDE = ARGS.backend || process.env.MIRROR_BACKEND ? String(ARGS.backend || process.env.MIRROR_BACKEND) : null;
+const CHECK_ONLY = Boolean(ARGS.check);
 const CERT_DIR = path.join(ROOT, 'certs');
 const LOG_DIR = path.join(ROOT, 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'mirror.log');
@@ -61,12 +72,13 @@ function parseArgs(argv) {
   return out;
 }
 
-fs.mkdirSync(LOG_DIR, { recursive: true });
-const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+// --check writes nothing to logs/: it may run next to a live server.
+if (!CHECK_ONLY) fs.mkdirSync(LOG_DIR, { recursive: true });
+const logStream = CHECK_ONLY ? null : fs.createWriteStream(LOG_FILE, { flags: 'a' });
 function log(line) {
   const s = `${new Date().toISOString()} ${line}`;
-  logStream.write(s + '\n');
-  if (process.env.MIRROR_QUIET !== '1') process.stdout.write(s + '\n');
+  logStream?.write(s + '\n');
+  if (process.env.MIRROR_QUIET !== '1' && !CHECK_ONLY) process.stdout.write(s + '\n');
 }
 
 function isLoopbackOrUnspecified(ip) {
@@ -109,19 +121,42 @@ function ensureCert() {
 
 // ---------------------------------------------------------------- rules
 
+// rules: the merged view of every loaded file (see mergeRules). sources: one entry per file, so each file is
+// reloaded on its own and a broken file keeps its previous compiled rules.
 let rules = null;
-let rulesMtime = -1;
-let rulesError = null;
+const sources = new Map(); // file -> { file, stamp, compiled|null, error|null }
+let dirError = null;
 
 function compileRegex(src, flags, where) {
   try { return new RegExp(src, flags ?? ''); } catch (e) { throw new Error(`${where}: bad regex ${JSON.stringify(src)}: ${e.message}`); }
 }
 
-function compileRules(raw) {
+function compileDevice(d) {
+  if (d === undefined) return null;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('device must be an object');
+  if (!Number.isInteger(d.productId) || d.productId <= 0) throw new Error('device.productId must be a positive integer (the USB product id in decimal)');
+  if (d.backend !== undefined && typeof d.backend !== 'string') throw new Error('device.backend must be a string');
+  return {
+    name: typeof d.name === 'string' ? d.name : null,
+    productId: d.productId,
+    cloneOf: d.cloneOf && typeof d.cloneOf === 'object' ? d.cloneOf : null,
+    backend: d.backend ?? null,
+    verified: d.verified ?? null,
+    notes: Array.isArray(d.notes) ? d.notes : [],
+  };
+}
+
+// One device file (or the --rules file). Its entries point back at it (entry.owner) for the backend filter.
+function compileRules(raw, source) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('rules root must be an object');
+  const device = compileDevice(raw.device);
   const r = {
-    upstreamHost: raw.upstreamHost || DEFAULT_UPSTREAM,
-    backend: raw.backend || '203-mac',
+    source,
+    device,
+    upstreamHost: raw.upstreamHost || null,
+    // device.backend; a top-level "backend" is still read so an older single rules file works with --rules.
+    backend: String(device?.backend ?? raw.backend ?? '203-mac'),
+    backends: null, // every backend name this file mentions, filled below
     resolve: raw.resolve && typeof raw.resolve === 'object' ? raw.resolve : {},
     jsonEdits: [],
     routes: [],
@@ -157,6 +192,11 @@ function compileRules(raw) {
       rewrite: (rt.rewrite ?? []).map((w, j) => compileRewrite(w, `${where}.rewrite[${j}]`)),
     });
   });
+  r.backends = new Set([r.backend]);
+  for (const e of [...r.jsonEdits, ...r.routes]) {
+    e.owner = r;
+    for (const b of e.backend ?? []) r.backends.add(b);
+  }
   return r;
 }
 
@@ -189,33 +229,100 @@ function compileRewrite(w, where) {
   throw new Error(`${where}: needs "literal" or "pattern"`);
 }
 
+// The files to load: --rules FILE alone, or devices/*.json in name order. _*.json (the template) and dotfiles are skipped.
+function listRuleFiles() {
+  if (RULES_PATH) return [RULES_PATH];
+  return fs.readdirSync(DEVICES_DIR)
+    .filter((f) => f.endsWith('.json') && !f.startsWith('_') && !f.startsWith('.'))
+    .sort()
+    .map((f) => path.join(DEVICES_DIR, f));
+}
+
+function describe(c) {
+  const d = c.device;
+  return `${d ? `${d.name ?? 'device'} productId=${d.productId}` : 'no device block'} backend=${activeBackend(c)} jsonEdits=${c.jsonEdits.length} routes=${c.routes.length}`;
+}
+
+// Called on every request. Costs one readdir and one stat per file; a file is parsed again only when its mtime or
+// size changed. A file that fails keeps its previous compiled rules (none on first load) and its error is reported.
 function loadRules() {
-  let st;
-  try { st = fs.statSync(RULES_PATH); } catch (e) {
-    if (!rules) { rules = compileRules({}); rulesError = `rules file missing: ${RULES_PATH}`; log(`rules ${rulesError}`); }
+  let files;
+  let changed = !rules;
+  try {
+    files = listRuleFiles();
+    if (dirError) { log(`rules ${DEVICES_DIR} readable again`); dirError = null; changed = true; }
+  } catch (e) {
+    const msg = `cannot read ${DEVICES_DIR}: ${e.message}`;
+    if (msg !== dirError || !rules) {
+      dirError = msg;
+      log(`rules ERROR ${msg}; keeping the loaded device files`);
+      rules = mergeRules([...sources.values()]);
+    }
     return rules;
   }
-  if (st.mtimeMs === rulesMtime && rules) return rules;
-  rulesMtime = st.mtimeMs;
-  try {
-    const next = compileRules(JSON.parse(fs.readFileSync(RULES_PATH, 'utf8')));
-    rules = next;
-    rulesError = null;
-    log(`rules loaded ${RULES_PATH} backend=${activeBackend()} jsonEdits=${rules.jsonEdits.length} routes=${rules.routes.length}`);
-  } catch (e) {
-    rulesError = e.message;
-    log(`rules ERROR keeping previous rules: ${e.message}`);
-    if (!rules) rules = compileRules({});
+  for (const file of sources.keys()) {
+    if (!files.includes(file)) { sources.delete(file); changed = true; log(`rules removed ${file}`); }
   }
+  for (const file of files) {
+    let stamp = 'missing';
+    try { const st = fs.statSync(file); stamp = `${st.mtimeMs}:${st.size}`; } catch { /* reported by the read below */ }
+    const prev = sources.get(file);
+    if (prev && prev.stamp === stamp) continue;
+    changed = true;
+    const entry = { file, stamp, compiled: prev?.compiled ?? null, error: null };
+    try {
+      entry.compiled = compileRules(JSON.parse(fs.readFileSync(file, 'utf8')), path.basename(file));
+      log(`rules loaded ${file} ${describe(entry.compiled)}`);
+    } catch (e) {
+      entry.error = e.message;
+      log(`rules ERROR ${file}: ${e.message}${entry.compiled ? ' (keeping its previous rules)' : ' (not loaded)'}`);
+    }
+    sources.set(file, entry);
+  }
+  if (changed) rules = mergeRules(files.map((f) => sources.get(f)));
   return rules;
 }
 
-function activeBackend() {
-  return String(BACKEND_OVERRIDE ?? rules?.backend ?? '203-mac');
+// Merges the per-file rules: jsonEdits and routes are concatenated in file order (for routes the first active match
+// wins). upstreamHost and resolve are global; the first file that sets a value wins and a conflict is an error.
+function mergeRules(list = []) {
+  const m = { upstreamHost: DEFAULT_UPSTREAM, resolve: {}, files: [], devices: [], jsonEdits: [], routes: [], errors: [] };
+  let hostFrom = null;
+  const pidFrom = new Map();
+  for (const s of list) {
+    const name = path.basename(s.file);
+    m.files.push(name);
+    if (s.error) m.errors.push(`${name}: ${s.error}${s.compiled ? ' (previous version still active)' : ' (not loaded)'}`);
+    const c = s.compiled;
+    if (!c) continue;
+    if (c.upstreamHost) {
+      if (!hostFrom) { m.upstreamHost = c.upstreamHost; hostFrom = name; }
+      else if (c.upstreamHost !== m.upstreamHost) m.errors.push(`${name}: upstreamHost ${c.upstreamHost} ignored, ${hostFrom} sets ${m.upstreamHost}`);
+    }
+    for (const [host, ip] of Object.entries(c.resolve)) if (!(host in m.resolve)) m.resolve[host] = ip;
+    const pid = c.device?.productId;
+    if (pid !== undefined) {
+      if (pidFrom.has(pid)) m.errors.push(`${name}: productId ${pid} is also declared by ${pidFrom.get(pid)}; its routes only match when that file's do not`);
+      else pidFrom.set(pid, name);
+    }
+    m.devices.push(c);
+    m.jsonEdits.push(...c.jsonEdits);
+    m.routes.push(...c.routes);
+  }
+  if (BACKEND_OVERRIDE !== null && list.length && !m.devices.some((c) => c.backends.has(BACKEND_OVERRIDE))) {
+    m.errors.push(`backend override ${BACKEND_OVERRIDE} matches no backend of any loaded file`);
+  }
+  if (dirError) m.errors.push(dirError);
+  return m;
+}
+
+// The override applies to every file that has a backend by that name; the others keep their own.
+function activeBackend(c) {
+  return BACKEND_OVERRIDE !== null && c.backends.has(BACKEND_OVERRIDE) ? BACKEND_OVERRIDE : c.backend;
 }
 
 function appliesToBackend(entry) {
-  return entry.backend === null || entry.backend.includes(activeBackend());
+  return entry.backend === null || entry.backend.includes(activeBackend(entry.owner));
 }
 
 // ---------------------------------------------------------------- upstream DNS
@@ -453,8 +560,14 @@ function noteWarning(msg) {
 function statusEndpoint(res) {
   const r = loadRules();
   const body = JSON.stringify({
-    ok: true, pid: process.pid, port: PORT, rulesPath: RULES_PATH, rulesError,
-    backend: activeBackend(), backendOverride: BACKEND_OVERRIDE,
+    ok: true, pid: process.pid, port: PORT,
+    rulesSource: RULES_SOURCE, files: r.files, errors: r.errors,
+    devices: r.devices.map((c) => ({
+      file: c.source, name: c.device?.name ?? null, productId: c.device?.productId ?? null,
+      cloneOf: c.device?.cloneOf?.productId ?? null, backend: activeBackend(c), verified: c.device?.verified ?? null,
+    })),
+    productIds: r.devices.map((c) => c.device?.productId).filter((p) => p !== undefined),
+    backendOverride: BACKEND_OVERRIDE,
     upstreamHost: r.upstreamHost,
     jsonEdits: r.jsonEdits.filter(appliesToBackend).map((e) => e.name),
     inactiveJsonEdits: r.jsonEdits.filter((e) => !appliesToBackend(e)).map((e) => e.name),
@@ -603,6 +716,18 @@ async function handle(req, res) {
 
 // ---------------------------------------------------------------- main
 
+if (CHECK_ONLY) {
+  // Validate and summarise the files, then exit: 0 when every file loads and at least one device is declared.
+  let r;
+  try { r = loadRules(); } catch (e) { console.error(`ERROR ${e.message}`); process.exit(1); }
+  console.log(`rules source: ${RULES_SOURCE}`);
+  for (const c of r.devices) console.log(`  ok    ${c.source}: ${describe(c)}`);
+  for (const e of r.errors) console.log(`  ERROR ${e}`);
+  const declared = r.devices.filter((c) => c.device).length;
+  if (!declared) console.log(`  ERROR no device file declares a device (devices/<slug>.json with a "device" block)`);
+  process.exit(r.errors.length || !declared ? 1 : 0);
+}
+
 const tls = ensureCert();
 loadRules();
 const server = https.createServer({ ...tls, ALPNProtocols: ['http/1.1'] }, (req, res) => {
@@ -620,7 +745,8 @@ server.on('upgrade', (req, socket) => {
 server.on('clientError', (err, socket) => { if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); });
 server.on('error', (e) => { log(`server ERROR ${e.message}`); process.exit(1); });
 server.listen(PORT, BIND, () => {
-  log(`mirror listening https://${BIND}:${PORT} pid=${process.pid} backend=${activeBackend()} rules=${RULES_PATH}`);
+  const devs = rules.devices.map((c) => `${c.source}(${c.device?.productId ?? '-'},${activeBackend(c)})`).join(' ') || 'none';
+  log(`mirror listening https://${BIND}:${PORT} pid=${process.pid} rules=${RULES_SOURCE} devices=${devs}${rules.errors.length ? ` errors=${rules.errors.length}` : ''}`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
@@ -628,7 +754,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     log(`mirror stopping (${sig})`);
     server.close();
     agent.destroy();
-    logStream.end(() => process.exit(0));
+    logStream?.end(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });
 }

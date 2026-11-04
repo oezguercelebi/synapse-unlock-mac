@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${MIRROR_PORT:-8443}"
 LOG_DIR="$ROOT/logs"
 PIDFILE="$LOG_DIR/server.pid"
+DEVICES_DIR="$ROOT/devices"
 SERVER_OUT="$LOG_DIR/server.out"
 APP_ID="com.razer.appengine.app"
 APP_PATH="$HOME/Library/Razer/RazerAppEngine/Razer.app"
@@ -100,10 +101,55 @@ server_pid() {
   return 1
 }
 
-mirror_check() {
-  curl -sk --max-time 5 --resolve "$HOST:$PORT:127.0.0.1" \
-    "https://$HOST:$PORT/synapse/dashboard/AvailableDevices.json?d=$(date +%s)" | grep -q '"productId":153'
+# productIds declared by the device files in $1 (default: this folder's devices/), space-separated: device.productId
+# of every *.json except _*.json, the files server.mjs loads. With MIRROR_RULES set, the server loads only that file,
+# so only it is read. A file that does not parse declares nothing here; the server lists it under "errors".
+declared_pids() {
+  node -e '
+    const fs = require("fs"), path = require("path");
+    const [dir, only] = process.argv.slice(1);
+    let files = [];
+    try {
+      files = only ? [only] : fs.readdirSync(dir).filter((f) => f.endsWith(".json") && !/^[_.]/.test(f)).sort().map((f) => path.join(dir, f));
+    } catch {}
+    const pids = [];
+    for (const f of files) {
+      try { const p = JSON.parse(fs.readFileSync(f, "utf8")).device?.productId; if (Number.isInteger(p)) pids.push(p); } catch {}
+    }
+    console.log(pids.join(" "));
+  ' "${1:-$DEVICES_DIR}" "${MIRROR_RULES:-}"
 }
+
+# "productId 153" / "productIds 153, 900" for messages ($1: devices dir as for declared_pids).
+declared_label() {
+  local p
+  p="$(declared_pids "${1:-}")"
+  case "$p" in
+    "") echo "no device productId (no devices/*.json declares one)" ;;
+    *" "*) echo "productIds ${p// /, }" ;;
+    *) echo "productId $p" ;;
+  esac
+}
+
+# GET a path from the mirror on $PORT (Host and SNI $HOST, certificate not checked).
+mirror_get() { curl -sk --fail --max-time 5 --resolve "$HOST:$PORT:127.0.0.1" "https://$HOST:$PORT$1"; }
+
+# Prints what keeps the mirror from being ready, or nothing: "no answer on /__mirror/status", or the declared
+# productIds (devices dir $1, default this folder's) that AvailableDevices.json does not list. Returns 1 when not ready.
+mirror_missing() {
+  local status list pid re missing=""
+  status="$(mirror_get /__mirror/status 2>/dev/null)" || status=""
+  if [[ "$status" != *'"ok": true'* ]]; then echo "no answer on /__mirror/status"; return 1; fi
+  list="$(mirror_get "/synapse/dashboard/AvailableDevices.json?d=$(date +%s)" 2>/dev/null)" || list=""
+  for pid in $(declared_pids "${1:-}"); do
+    re="\"productId\":[[:space:]]*${pid}[^0-9]"
+    [[ "$list" =~ $re ]] || missing="${missing:+$missing }$pid"
+  done
+  if [[ -n "$missing" ]]; then echo "AvailableDevices.json lacks productId $missing"; return 1; fi
+}
+
+# True when the mirror answers /__mirror/status and AvailableDevices.json lists every declared productId.
+mirror_check() { mirror_missing "${1:-}" >/dev/null; }
 
 # Start server.mjs in the background (backend $BACKEND when set) and record its pid in $PIDFILE and
 # $SERVER_CHILD. Fails when another process listens on the port.
@@ -121,7 +167,7 @@ start_server() {
   echo "$SERVER_CHILD" >"$PIDFILE"
 }
 
-# Wait until the server (pid $1) serves productId 153: $2 attempts 0.25 s apart (default 40, about 10 s).
+# Wait until the server (pid $1) passes mirror_check: $2 attempts 0.25 s apart (default 40, about 10 s).
 # Returns 1 on timeout or when the server exits.
 wait_for_mirror() {
   local i
@@ -177,7 +223,7 @@ agent_bootout() {
   return 1
 }
 
-# After a bootstrap or kickstart: wait up to 30 s until a server other than pid $1 serves productId 153 and
+# After a bootstrap or kickstart: wait up to 30 s until a server other than pid $1 passes mirror_check and
 # print its pid. $2 is the size of agent.out before the (re)start. Returns 1 on timeout, 2 when agent.out shows
 # that macOS privacy protection keeps launchd jobs out of this folder (see tcc_hint).
 wait_for_agent_server() {

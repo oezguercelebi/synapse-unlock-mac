@@ -1,12 +1,25 @@
 {
   "_comment": [
-    "Rules for server.mjs (hot-reloaded on the next request after this file changes; a broken file is logged and the previous rules stay active).",
+    "Device file for server.mjs: the Basilisk V3 wired (productId 153). server.mjs loads every devices/*.json except _*.json and merges them; this file is hot-reloaded on the next request after it changes, and a broken version is logged while the previous one stays active.",
     "Source: the 203->153 rewrite spec of 2026-11-04 (builds mw main.7350e9b0198f982a848a.js, ui main.38358e33.js, ui 4555.dd346277.chunk.js). README.md explains every rule, what is kept on purpose and the optional rewrites that are NOT applied.",
-    "backend: '203-mac' (default) serves /synapse/products/153/** from the Mac 203 (Basilisk V3 35K) module with rewrites; '153-win' serves Razer's Windows 153 module from apps.razer.com (untested fallback). Override without editing: MIRROR_BACKEND=153-win or --backend 153-win.",
-    "Keys starting with '_' are ignored by the server."
+    "device.backend: '203-mac' (default) serves /synapse/products/153/** from the Mac 203 (Basilisk V3 35K) module with rewrites; '153-win' serves Razer's Windows 153 module from apps.razer.com (untested fallback). Override without editing: MIRROR_BACKEND=153-win or --backend 153-win (for a manual mirror: ./launch.sh --backend 153-win).",
+    "Keys starting with '_' are ignored by the server. devices/_template.json documents every key."
   ],
+  "device": {
+    "name": "Razer Basilisk V3",
+    "productId": 153,
+    "cloneOf": { "productId": 203, "name": "Razer Basilisk V3 35K" },
+    "backend": "203-mac",
+    "verified": "2026-11-04",
+    "notes": [
+      "Wired Basilisk V3, USB 1532:0099 (0x0099 = 153). The 35K (203) is the same body, buttons and control interface (3) with a 35K sensor; its Mac module is published, the 153 one is not (403 on apps-mac).",
+      "Verified live on 2026-11-04 against mw main.7350e9b0198f982a848a.js, ui main.38358e33.js and ui 4555.dd346277.chunk.js: HID connect on interface 3, serial and firmware 1.2.0.0 read, DPI stages and Tactile/Free-Spin confirmed by the mouse's own hardware events, polling 125/500/1000, lighting, Smart-Reel and Scroll Acceleration on/off.",
+      "Firmware-rejected [2,2,35] Set Scroll Wheel Smart Reel Mode Threshold: 'Error USB Transfer command not supported'. This is the level slider under the Smart-Reel toggle; Smart-Reel on/off works at the firmware's built-in level.",
+      "Firmware-rejected [2,2,34] Set Scroll Virtual Acceleration Level: 'Error USB Transfer command not supported'. This is the level slider under the Scroll Acceleration toggle; Scroll Acceleration on/off works at the firmware's built-in level.",
+      "The 35K has both commands; the wired V3 does not. Dragging either slider changes nothing on the mouse and the UI shows no error."
+    ]
+  },
   "upstreamHost": "apps-mac.razer.com",
-  "backend": "203-mac",
   "jsonEdits": [
     {
       "name": "dashboard-available-add-153",

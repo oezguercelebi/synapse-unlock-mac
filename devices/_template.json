@@ -1,0 +1,138 @@
+{
+  "_comment": [
+    "TEMPLATE, not a device. Copy it to devices/<slug>.json (no leading underscore) and replace everything. Made-up product ids: 900 is 'your' device, 901 its sibling.",
+    "server.mjs loads every devices/*.json except files starting with '_' (like this one), merges them and hot-reloads each file on its own. A broken file is logged, listed under 'errors' in /__mirror/status, and its previous version stays active.",
+    "Check a file without starting anything: node server.mjs --check (all device files) or node server.mjs --check --rules devices/<slug>.json (one file).",
+    "Every key that starts with '_' is ignored by the server. In this template, '_<key>' explains the key next to it. The working example is devices/basilisk-v3.json.",
+    "Regexes are JavaScript regex source strings: escape backslashes for JSON (\\. for a literal dot, \\d for a digit)."
+  ],
+
+  "device": {
+    "_device": "Who this file is for. lib.sh (mirror_check, used by launch.sh, agent.sh and status.sh) waits until /synapse/dashboard/AvailableDevices.json lists device.productId of every device file.",
+    "name": "Razer Example Mouse",
+    "_name": "Display name, for status output and the README. The name Synapse shows comes from the module (rewrite it there).",
+    "productId": 900,
+    "_productId": "Required. The USB product id IN DECIMAL (ioreg idProduct; 0x0099 = 153). Synapse's device lists and the /synapse/products/<pid>/ paths use this number.",
+    "cloneOf": { "productId": 901, "name": "Razer Example Mouse Pro" },
+    "_cloneOf": "The sibling whose published Mac module this device borrows. Informational; the routes below do the work. Pick a sibling with the same body, buttons and connection type: a wired device must not clone a wireless one.",
+    "backend": "901-mac",
+    "_backend": "The active backend name for this file (default '203-mac'). Entries with a 'backend' field apply only while it is active. MIRROR_BACKEND / --backend NAME switches every device file that has a backend called NAME; the others keep their own.",
+    "verified": "YYYY-MM-DD",
+    "_verified": "Date of the live test on real hardware, or null while unverified.",
+    "notes": ["What works, what the firmware rejects (with the products_<pid>_mw log line), what is not verified."],
+    "_notes": "Free text, shown nowhere by the server. Keep the honest list of known gaps here."
+  },
+
+  "upstreamHost": "apps-mac.razer.com",
+  "_upstreamHost": "Optional, global: the default upstream host. Every file that sets it must agree; the first file wins and a conflict is reported as an error.",
+
+  "resolve": {},
+  "_resolve": "Optional, global: pin an upstream IP instead of DNS, {\"apps-mac.razer.com\": [\"<real ip>\"]}. Loopback is always refused. Leave empty.",
+
+  "jsonEdits": [
+    {
+      "_jsonEdit": "Structural edit of a JSON response. All jsonEdits whose 'match' fits the request path are applied in file order, so several device files can each add their own entry to the same dashboard list.",
+      "name": "dashboard-available-add-900",
+      "_name": "Shown in logs and /__mirror/status.",
+      "match": "^/synapse/dashboard/AvailableDevices\\.json$",
+      "_match": "Required. Regex on the request path; the query string (?d=, ?_= cache-busters) is not part of it.",
+      "flags": "",
+      "_flags": "Optional regex flags for 'match'.",
+      "key": "productId",
+      "_key": "Identity field of array entries (default productId).",
+      "ensure": [{ "productId": 900, "commercialName": "Example Mouse" }],
+      "_ensure": "Array roots: each entry is appended when no entry has the same key value. For a wireless device copy dongleId/bleId from Razer's own entry in UnavailableDevices.json. Do not add repId: the sibling module never reads realProductId.",
+      "_why": "Free text: why this edit exists."
+    },
+    {
+      "name": "dashboard-lists-drop-900",
+      "match": "^/synapse/dashboard/(UnavailableDevices|inDevelopmentDevices|Synapse2Devices|Windows10Devices)\\.json$",
+      "key": "productId",
+      "remove": [900],
+      "_remove": "Array roots: entries whose key value is listed are dropped. A list with nothing to drop is served byte-identical."
+    },
+    {
+      "name": "installer-manifest-add-osx",
+      "backend": "900-win",
+      "_backend": "Optional: a backend name or an array of names; omit for every backend. This edit only runs while the backend 900-win is active.",
+      "match": "^/synapse/products/900/(mw|ui)/installer-manifest\\.json$",
+      "setIfMissing": { "osx": { "latest": { "version": "1.0.0", "url": "manifest-1.0.0.json" }, "archive": [] } },
+      "_setIfMissing": "Object roots: dotted path -> value, written only when the path does not exist.",
+      "set": {},
+      "_set": "Object roots: dotted path -> value, always written, e.g. {\"a.b\": 1}. Empty here."
+    }
+  ],
+
+  "routes": [
+    {
+      "_route": "Routes are tried in order across all device files; the first whose backend is active and whose 'match' fits wins. Only match your own /synapse/products/<pid>/ paths, so loading every device file stays harmless. A response a route or jsonEdit touches is 'managed': fetched uncompressed and in full, edited, sent with Cache-Control no-store.",
+      "name": "lighting-manifest-900",
+      "match": "^/synapse/products/900/mw/lighting-manifests/(DeviceManifest_900_\\d+\\.json)$",
+      "path": "/synapse/lighting-engine/manifest/$1",
+      "_why": "Serve Razer's genuine lighting manifest for this pid when it exists upstream. Must come before the generic module route."
+    },
+    {
+      "name": "module-900-from-901",
+      "_name": "Shown in logs (route:<name>), the X-Mirror-Route header and /__mirror/status.",
+      "backend": "901-mac",
+      "_backend": "Optional: string, array, or omitted (every backend).",
+      "match": "^/synapse/products/900/(mw|ui)/(.*)$",
+      "_match": "Required. Regex on the request path (no query string).",
+      "flags": "",
+      "_flags": "Optional regex flags for 'match'.",
+      "host": "apps-mac.razer.com",
+      "_host": "Optional upstream host for this route (default upstreamHost). The Windows module of a pid lives on apps.razer.com.",
+      "path": "/synapse/products/901/$1/$2",
+      "_path": "Optional String.replace template applied to the request path with 'match' ($1, $<name>). Omit to keep the path.",
+      "pathRewrite": [
+        {
+          "name": "900_-segments-to-901_",
+          "pattern": "(?<pre>^|/)900_(?<ed>\\d+)",
+          "replace": "$<pre>901_$<ed>",
+          "_why": "Rewrite entries (same format as 'rewrite' below) applied to the mapped upstream path. Here: path segments named after the pid, such as /900_0/PluginImages/900_0_0_dashboard3x.avif."
+        }
+      ],
+      "_pathRewrite": "Optional list of rewrite entries for the upstream path.",
+      "keepQuery": true,
+      "_keepQuery": "Append the original query string upstream (default true).",
+      "noStore": true,
+      "_noStore": "Send Cache-Control no-store and drop ETag/Last-Modified (default true).",
+      "textTypes": "^(text/javascript|application/javascript|application/json|text/html)\\b",
+      "_textTypes": "Regex on Content-Type: which bodies are edited. Default: js, html, json, css, plain; an octet-stream body falls back to its file extension.",
+      "noRewrite": "(/installer-manifest\\.json$|/manifests/|\\.map$|\\.(svg|png|avif|ico|css|woff2?)$)",
+      "_noRewrite": "Regex on the request path: body rewrites are skipped and the body is served byte-identical (jsonEdits still apply). Signed manifests belong here.",
+      "rewrite": [
+        {
+          "name": "productId",
+          "_name": "Shown in warn= lines and recentWarnings.",
+          "literal": "productId:901,",
+          "_literal": "Exact text to replace (every occurrence). Use either 'literal' or 'pattern'.",
+          "replace": "productId:900,",
+          "_replace": "Replacement. With 'pattern' it has String.replace semantics ($1, $<name>, $&).",
+          "required": "^/synapse/products/900/(mw|ui)/(static/js/)?main\\.[0-9a-f]+\\.js$",
+          "_required": "Optional regex on the request path: a 2xx response there with 0 matches is refused with 502 instead of being served unpatched. Use it for the productId gate in the main bundles.",
+          "expect": { "mw/main.0123abcd.js": 3, "ui/static/js/main.4567cdef.js": 1 },
+          "_expect": "Optional: upstream path suffix -> match count of today's build. A different count is logged as warn= and listed under recentWarnings; the file is still served. Keys name hashed files, so a renamed bundle gives no warning (that is what 'required' is for)."
+        },
+        {
+          "name": "translation-keys",
+          "paths": "/manifest\\.json$",
+          "_paths": "Optional regex on the request path that limits this entry to some files.",
+          "pattern": "\"901_(\\d+)\":",
+          "_pattern": "Regex source (instead of 'literal').",
+          "flags": "g",
+          "_flags": "Regex flags for 'pattern'; 'g' is always added.",
+          "replace": "\"900_$1\":"
+        }
+      ],
+      "_rewrite": "Body rewrites, run in order on 2xx textual bodies (UTF-8, or latin1 when the body is not UTF-8) unless 'noRewrite' matches. Typical set for a clone: productId (required), webpack context keys \"./901_, translation keys \"901_N\":, service-worker precache URLs, product names in every language, maxDPI and the DPI slider, master-guide and support-page ids."
+    },
+    {
+      "name": "module-900-from-windows",
+      "backend": "900-win",
+      "match": "^/synapse/products/900/(mw|ui)/",
+      "host": "apps.razer.com",
+      "_why": "Alternative backend: Razer's Windows module for the same pid, no rewrites. Untested for any device; it needs the osx installer block above. See README, Add your own device."
+    }
+  ]
+}
