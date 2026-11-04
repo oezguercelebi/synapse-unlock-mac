@@ -1,0 +1,197 @@
+{
+  "_comment": [
+    "Rules for server.mjs (hot-reloaded on the next request after this file changes; a broken file is logged and the previous rules stay active).",
+    "Source: the 203->153 rewrite spec of 2026-11-04 (builds mw main.7350e9b0198f982a848a.js, ui main.38358e33.js, ui 4555.dd346277.chunk.js). README.md explains every rule, what is kept on purpose and the optional rewrites that are NOT applied.",
+    "backend: '203-mac' (default) serves /synapse/products/153/** from the Mac 203 (Basilisk V3 35K) module with rewrites; '153-win' serves Razer's Windows 153 module from apps.razer.com (untested fallback). Override without editing: MIRROR_BACKEND=153-win or --backend 153-win.",
+    "Keys starting with '_' are ignored by the server."
+  ],
+  "upstreamHost": "apps-mac.razer.com",
+  "backend": "203-mac",
+  "jsonEdits": [
+    {
+      "name": "dashboard-available-add-153",
+      "match": "^/synapse/dashboard/AvailableDevices\\.json$",
+      "key": "productId",
+      "ensure": [
+        { "productId": 153, "commercialName": "Basilisk V3" }
+      ],
+      "_why": "Gate 1. No repId: background-manager would then report and open the module under the repId pid, and the 203 module never reads realProductId."
+    },
+    {
+      "name": "dashboard-lists-drop-153",
+      "match": "^/synapse/dashboard/(UnavailableDevices|inDevelopmentDevices|Synapse2Devices|Windows10Devices)\\.json$",
+      "key": "productId",
+      "remove": [153]
+    },
+    {
+      "name": "win153-installer-manifest-add-osx",
+      "backend": "153-win",
+      "match": "^/synapse/products/153/(mw|ui)/installer-manifest\\.json$",
+      "setIfMissing": {
+        "osx": {
+          "latest": { "version": "1.0.1", "url": "manifest-1.0.1.json", "releaseDate": 1757930753977 },
+          "archive": []
+        }
+      },
+      "_why": "The Windows installer-manifest has no 'osx' block; ResourceUpdateChecker on macOS reads res.osx.latest (TypeError, install status never resolves) and then fetches /<baseURL>/osx/<latest.url>. Copy of the 203 Mac osx block."
+    }
+  ],
+  "routes": [
+    {
+      "name": "lighting-manifest-153",
+      "match": "^/synapse/products/153/mw/lighting-manifests/(DeviceManifest_153_\\d+\\.json)$",
+      "path": "/synapse/lighting-engine/manifest/$1",
+      "_why": "Both backends. The lighting-engine first asks the module-local path; serve Razer's genuine DeviceManifest_153_<ed>.json (same ledConfig as 203: 1x11 device matrix, 7x5 chroma matrix) unmodified. Must precede the generic product routes."
+    },
+    {
+      "name": "win153-osx-resource-manifest",
+      "backend": "153-win",
+      "match": "^/synapse/products/153/(?:mw|ui)/manifests/osx/(manifest-[\\d.]+\\.json)$",
+      "path": "/synapse/products/203/mw/manifests/osx/$1",
+      "_why": "Answers the request that the injected osx block causes (/synapse/products/153/mw/manifests/osx/manifest-1.0.1.json) with the 203 Mac osx resource manifest (resources: [], no driver on macOS). Must precede module-153-from-win."
+    },
+    {
+      "name": "module-153-from-203",
+      "backend": "203-mac",
+      "match": "^/synapse/products/153/(mw|ui)/(.*)$",
+      "path": "/synapse/products/203/$1/$2",
+      "pathRewrite": [
+        {
+          "name": "153_-segments-to-203_",
+          "pattern": "(?<pre>^|/)153_(?<ed>\\d+)",
+          "replace": "$<pre>203_$<ed>",
+          "_why": "/synapse/products/153/ui/153_<ed>/PluginImages/153_<ed>_<layout>_dashboard1x.avif and /153_<ed>/dashboardNames.json exist upstream only under 203_ names. Example: .../153/ui/153_0/PluginImages/153_0_0_dashboard3x.avif -> .../203/ui/203_0/PluginImages/203_0_0_dashboard3x.avif."
+        }
+      ],
+      "textTypes": "^(text/javascript|application/javascript|application/json|text/html)\\b",
+      "noRewrite": "(/installer-manifest\\.json$|/manifests/|\\.map$|\\.(svg|png|avif|ico|css|woff2?)$)",
+      "rewrite": [
+        {
+          "name": "productId",
+          "literal": "productId:203,",
+          "replace": "productId:153,",
+          "required": "^/synapse/products/153/(mw/main\\.[0-9a-f]+\\.js|ui/static/js/main\\.[0-9a-f]+\\.js)$",
+          "expect": { "mw/main.7350e9b0198f982a848a.js": 3, "ui/static/js/main.38358e33.js": 1 },
+          "_why": "THE gate: DeviceInfo.productId, DEVICE_BASE_LOCAL_DATA.productId and the runtime default. connectCurrentDevice keeps devices whose productId is in [DeviceInfo.productId, bleId, dongleId]; connectHidDevice filters hid.getDevices() by productId. 'required': a main bundle without this literal is refused (502) instead of served as a module that can never find the mouse."
+        },
+        {
+          "name": "webpack-context-keys",
+          "literal": "\"./203_",
+          "replace": "\"./153_",
+          "expect": { "mw/main.7350e9b0198f982a848a.js": 3, "ui/static/js/4555.dd346277.chunk.js": 22 },
+          "_why": "Context keys built from the pid at runtime: mw ./${PID}_${ed}/translations, ui ./${pid}_${ed}/img_prods/*.png (synchronous require in TopViewComponent, throws without the 153 key)."
+        },
+        {
+          "name": "manifest-productTranslations-keys",
+          "paths": "/manifest\\.json$",
+          "pattern": "\"203_(\\d+)\":",
+          "replace": "\"153_$1\":",
+          "expect": { "mw/manifest.json": 2, "ui/manifest.json": 3 },
+          "_why": "background-manager getManifestName reads productTranslations[`${pid}_0`] from /synapse/products/<pid>/mw/manifest.json."
+        },
+        {
+          "name": "sw-precache-dirs",
+          "paths": "/service-worker\\.js$",
+          "pattern": "/synapse/products/203/(mw|ui)/203_(\\d+)/",
+          "replace": "/synapse/products/153/$1/153_$2/",
+          "expect": { "ui/service-worker.js": 3 },
+          "_why": "Absolute precache URLs (PluginImages avif, dashboardNames.json) in the ui service worker."
+        },
+        {
+          "name": "sw-precache-image-names",
+          "paths": "/service-worker\\.js$",
+          "pattern": "/PluginImages/203_(\\d+)_(\\d+)_",
+          "replace": "/PluginImages/153_$1_$2_",
+          "expect": { "ui/service-worker.js": 2 },
+          "_why": "File-name part of the two precached dashboard images."
+        },
+        {
+          "name": "name",
+          "literal": "Basilisk V3 35K",
+          "replace": "Basilisk V3",
+          "expect": {
+            "mw/main.7350e9b0198f982a848a.js": 2,
+            "mw/translations0.9f69bb2baa12c64cee7c.js": 18,
+            "mw/translations1.a8670fa6314e7abcfe3a.js": 18,
+            "mw/manifest.json": 37,
+            "ui/manifest.json": 1,
+            "ui/static/js/main.38358e33.js": 2,
+            "ui/static/js/4555.dd346277.chunk.js": 1
+          }
+        },
+        {
+          "name": "name-upper",
+          "literal": "BASILISK V3 35K",
+          "replace": "BASILISK V3",
+          "expect": { "ui/203_0/dashboardNames.json": 9 }
+        },
+        {
+          "name": "name-zh-CN",
+          "literal": "巴塞利斯蛇 V3 35K",
+          "replace": "巴塞利斯蛇 V3",
+          "expect": {
+            "mw/translations0.9f69bb2baa12c64cee7c.js": 2,
+            "mw/translations1.a8670fa6314e7abcfe3a.js": 2,
+            "mw/manifest.json": 4,
+            "ui/203_0/dashboardNames.json": 1
+          }
+        },
+        {
+          "name": "webapp-manifest-name",
+          "paths": "/manifest\\.json$",
+          "literal": "\"DariaRefresh_",
+          "replace": "\"Daria_",
+          "expect": { "mw/manifest.json": 2, "ui/manifest.json": 2 },
+          "_why": "Cosmetic: Razer's 153 module is Daria_MW."
+        },
+        {
+          "name": "maxDPI",
+          "literal": "maxDPI:35e3,",
+          "replace": "maxDPI:26e3,",
+          "expect": { "mw/main.7350e9b0198f982a848a.js": 1, "ui/static/js/main.38358e33.js": 1 },
+          "_why": "Focus+ 26K sensor. Kept: mw 'd=35e3' (calibration constant) and ui 4967 'maxDPI||35e3' (fallback when maxDPI is falsy)."
+        },
+        {
+          "name": "dpi-slider-top-segment",
+          "pattern": "toValue:35e3,step:30\\*([A-Za-z_$][\\w$]*)\\.dpiStep/2e4",
+          "replace": "toValue:26e3,step:30*$1.dpiStep/11e3",
+          "expect": { "ui/static/js/main.38358e33.js": 1 },
+          "_why": "Top segment of SENSITIVITY_RANGE_VALUES (70-100% -> 15000..35000) becomes 15000..26000."
+        },
+        {
+          "name": "master-guide",
+          "literal": "BASILISKV3-00000203-",
+          "replace": "BASILISKV3-00000153-",
+          "expect": { "mw/main.7350e9b0198f982a848a.js": 1, "ui/static/js/main.38358e33.js": 1 }
+        },
+        {
+          "name": "support-page",
+          "literal": "/app/answers/detail/a_id/14663",
+          "replace": "/app/answers/detail/a_id/5620",
+          "expect": { "ui/static/js/main.38358e33.js": 1 }
+        }
+      ]
+    },
+    {
+      "name": "module-153-from-win",
+      "backend": "153-win",
+      "match": "^/synapse/products/153/(mw|ui)/",
+      "host": "apps.razer.com",
+      "_why": "Razer's Windows 153 module (Daria_MW, master-m16-beta), same path, no text rewrites. Fallback only; untested at runtime."
+    },
+    {
+      "name": "win153-razer-config",
+      "backend": "153-win",
+      "match": "^/synapse/assets/js/razer-config@latest/index\\.global\\.js$",
+      "host": "apps.razer.com",
+      "_why": "403 on apps-mac; the Windows mw main reads the global RazerConfig at top level."
+    },
+    {
+      "name": "win153-rz-accessibility",
+      "backend": "153-win",
+      "match": "^/synapse/assets/js/keyboard-nav/rz-accessibility\\.min\\.js$",
+      "host": "apps.razer.com",
+      "_why": "403 on apps-mac, referenced by the Windows bundles. Checked 2026-11-04: these two are the only /synapse/assets/** paths the Windows 153 module references that apps-mac refuses."
+    }
+  ]
+}
