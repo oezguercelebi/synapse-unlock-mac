@@ -58,8 +58,7 @@
       "match": "^/synapse/products/900/(mw|ui)/installer-manifest\\.json$",
       "setIfMissing": { "osx": { "latest": { "version": "1.0.0", "url": "manifest-1.0.0.json" }, "archive": [] } },
       "_setIfMissing": "Object roots: dotted path -> value, written only when the path does not exist.",
-      "set": {},
-      "_set": "Object roots: dotted path -> value, always written, e.g. {\"a.b\": 1}. Empty here."
+      "_set": "Optional 'set', object roots: dotted path -> value, always written, e.g. \"set\": {\"osx.latest.version\": \"1.0.0\"}. Not used here. Leave it out when there is nothing to set: even an empty set makes the server re-serialize the JSON instead of serving it untouched."
     }
   ],
 
