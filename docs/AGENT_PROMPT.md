@@ -165,10 +165,11 @@ Once the live test passes, set it up so the user never has to think about it aga
   Synapse); the agent comes back at next login unless `./disable-login.sh` is run, which removes
   the plist and the installed copy, leaves Razer.app alone and hands the mirror back to a manual
   mirror from the repo.
-- Verify like the repo did: kill the mirror pid → launchd restarts it within ~15 s and Synapse's
-  pid is unchanged; with Synapse quit, `launchctl bootout gui/$(id -u)/com.synapse-unlock-mac.agent`
+- To verify start at login on this Mac: kill the mirror's pid → launchd should restart it within
+  ~15 s, with Synapse's pid unchanged; with Synapse quit, `launchctl bootout gui/$(id -u)/com.synapse-unlock-mac.agent`
   + `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.synapse-unlock-mac.agent.plist` →
-  the mirror starts and Synapse is launched with the `--host-rules` switch (`ps -o args=`).
+  the mirror should start and Synapse should be launched with the `--host-rules` switch (`ps -o args=`).
+  `./status.sh` shows the agent's state, its node and its last exit code throughout.
 - Nothing Razer-owned is touched by any of this; Razer's own daemons (Elevation Service,
   GameManagerService) are unaffected. See README, "Start at login".
 

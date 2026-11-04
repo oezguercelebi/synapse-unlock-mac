@@ -1,12 +1,13 @@
 # Shared helpers for the scripts in this folder. Sourced, not executed.
 # shellcheck shell=bash
 #
-# Two copies of the runtime can exist, and each one only ever touches its own pidfile and logs:
+# Two copies of the runtime can exist, and each one only ever writes its own pidfile and logs:
 #   - the repo (wherever you cloned it): launch.sh runs a manual mirror from here, logs in <repo>/logs/;
 #   - the installed copy in $INSTALL_DIR, which enable-login.sh syncs from the repo and launchd runs (agent.sh),
 #     logs in $INSTALL_DIR/logs/.
 # ROOT is the folder of the lib.sh being sourced, so LOG_DIR, PIDFILE and DEVICES_DIR follow the running copy.
-# The repo's scripts stop the agent's mirror with launchctl bootout, never through its pidfile.
+# The repo's scripts stop the agent's mirror with launchctl bootout; an installed-copy server launchd no longer
+# manages is killed by pid (agent_server_pid), and its pidfile is left to agent.sh.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${MIRROR_PORT:-8443}"

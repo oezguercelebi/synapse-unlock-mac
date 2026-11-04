@@ -24,7 +24,7 @@ delete the folder, and you're back to stock (see [Revert](#revert)). Razer: no h
 You need macOS with Razer Synapse for macOS installed, Node 20 or newer (tested with 24) and nothing else: no npm install.
 
 ```bash
-git clone <this repo's URL> synapse-unlock-mac && cd synapse-unlock-mac
+git clone https://github.com/oezguercelebi/synapse-unlock-mac.git && cd synapse-unlock-mac
 ./launch.sh          # try it: quits Synapse, starts the mirror, relaunches Synapse through it
 ./enable-login.sh    # keep it: the mirror and Synapse start at every login (see Start at login)
 ./stop.sh --stock    # back to stock Synapse (with start at login on: ./stop.sh --stock --disable-login)
@@ -56,7 +56,7 @@ Your device is not here? See [Add your own device](#add-your-own-device).
 | `status.sh` | Who owns port 8443, the mirror's status and rewrite warnings, whether Razer.app carries the switches, the login agent, the last requests. |
 | `enable-login.sh`, `disable-login.sh`, `agent.sh` | Start at login: install, remove, and the script launchd runs. See [Start at login](#start-at-login). |
 | `lib.sh` | Shell helpers shared by the scripts. |
-| `certs/`, `logs/` | Created on first start: a self-signed certificate for `apps-mac.razer.com` (openssl), `mirror.log` (one line per request), `server.out`, `server.pid`. |
+| `certs/`, `logs/` | Created on first start: a self-signed certificate for `apps-mac.razer.com` (openssl), `mirror.log` (one line per request), `server.out`, `server.pid`. These are the manual mirror's; with start at login on, the login agent keeps its own in `~/Library/Application Support/synapse-unlock-mac/` (`logs/` there also has `agent.out`). `status.sh` names the log in use. |
 
 ### Two gates, both on Razer's server
 
@@ -220,14 +220,14 @@ and `status.sh` print its error instead of waiting for its device. A device's ro
     "notes": ["what works, what the firmware rejects"]
   },
   "jsonEdits": [{                           // structural edits of JSON responses
-    "name": "dashboard-available-add-153",
+    "name": "dashboard-available-add-153",  // the gate: no "backend", so it applies whatever backend is active
     "match": "^/synapse/dashboard/AvailableDevices\\.json$",  // regex on the path, query string ignored
     "ensure": [{ "productId": 153, "commercialName": "Basilisk V3" }],  // appended if missing (array roots)
-    "remove": [],                            // entries dropped by key (array roots); set / setIfMissing for objects
-    "backend": "153-win"                     // optional; omit for every backend
+    "remove": []                             // entries dropped by key (array roots); set / setIfMissing for objects
   }],
   "routes": [{                              // first active match wins, across all device files
     "name": "module-153-from-203",
+    "backend": "203-mac",                   // optional: only while this backend is active; omit for every backend
     "match": "^/synapse/products/153/(mw|ui)/(.*)$",
     "path": "/synapse/products/203/$1/$2",  // String.replace template; "host" picks another upstream host
     "pathRewrite": [{ "pattern": "(?<pre>^|/)153_(?<ed>\\d+)", "replace": "$<pre>203_$<ed>" }],
@@ -306,8 +306,9 @@ it is launched. The agent then waits on the server, so the job lives exactly as 
 dies, launchd restarts the job and Razer.app, which already points at `127.0.0.1:8443`, reconnects by itself. On
 SIGTERM (`launchctl bootout`, `kickstart -k`) the agent stops the server and leaves Razer.app running.
 
-The repo and the installed copy never touch each other's pidfile or logs: each script works on the folder it runs from,
-and the repo's scripts reach the agent's mirror through launchd.
+The repo and the installed copy never write each other's pidfile or logs: each script works on the folder it runs from.
+The repo's scripts stop the agent's mirror with `launchctl bootout`; an installed-copy server that launchd no longer
+manages (left over from an unloaded agent) is killed directly, found by the `server.mjs` path in its command line.
 
 | Script (from the repo) | With start at login enabled |
 |---|---|
@@ -360,7 +361,9 @@ Honest ones:
 
 1. **Unofficial, and tied to today's builds.** The rewrites were written against mw `main.7350e9b0198f982a848a.js`,
    ui `main.38358e33.js` and `4555.dd346277.chunk.js`. When Razer republishes the sibling module, rewrites can miss:
-   the server logs `warn=` and lists the mismatch under `recentWarnings` in `status.sh` (`grep warn= logs/mirror.log`).
+   the server logs `warn=` and lists the mismatch under `recentWarnings` in `status.sh` (`grep warn= logs/mirror.log`
+   for a manual mirror; with start at login on, the live log is
+   `~/Library/Application Support/synapse-unlock-mac/logs/mirror.log`, and `status.sh` names the one in use).
    `expect` keys name hashed files, so a renamed bundle gives no warning; the `required` `productId` check covers that
    case and answers 502 instead of serving a module that can never find the mouse.
 2. **`--ignore-certificate-errors` is scoped, but not narrow.** It applies only to the Synapse process tree that
@@ -439,8 +442,14 @@ The launchd agent itself was tested under launchd from a scratch copy outside `~
 home folder. The checks covered: sync into a path with a space, drift detection, and the installed `agent.sh` run by
 hand (own certificate, pidfile and logs, mirror up, the quoted `--host-rules` argument). `kill -9` of the server ends
 the agent with 137, the exit that KeepAlive restarts under launchd. SIGTERM stops the server. `stop.sh`,
-`disable-login.sh` and `launch.sh` handle the copy correctly. The installed-copy agent has not yet run under launchd
-on this Mac.
+`disable-login.sh` and `launch.sh` handle the copy correctly. `enable-login.sh` itself was then run end to end in a
+scratch home folder against a stand-in for `launchctl` that starts `agent.sh` with only the plist's environment, as
+launchd does. That covered the node choice (stable link, `MIRROR_NODE`, the shell's node as found), a node that
+disappears afterwards (reported by `status.sh` and in `agent.out`), and each failure on a re-run while the agent
+served the port (bootstrap error, TCC, copy error, a mirror that never starts); after each one a manual mirror served
+the port again. A stand-in is not launchd:
+
+**Installed-copy login agent under launchd on this Mac: to be verified on this machine.**
 
 ---
 
