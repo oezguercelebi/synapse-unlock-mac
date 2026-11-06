@@ -340,16 +340,25 @@ async function resolveUpstream(host) {
   const hit = dnsCache.get(host);
   if (hit && hit.until > Date.now()) return hit.ips[0];
   let ips = [];
+  let lookupError = '';
   try {
     ips = (await dns.promises.lookup(host, { all: true })).map((a) => a.address);
-  } catch { /* fall through to direct resolver */ }
+  } catch (e) { lookupError = e.code || e.message; /* fall through to direct resolver */ }
   let good = ips.filter((ip) => !isLoopbackOrUnspecified(ip));
+  let directError = '';
   if (!good.length) {
-    // The system resolver mapped the host to loopback (e.g. an /etc/hosts entry pointing at us).
+    // The system resolver mapped the host to loopback (e.g. an /etc/hosts entry pointing at us), or did not answer.
     // Ask the DNS servers directly; Resolver ignores /etc/hosts.
-    try { good = (await directResolver.resolve4(host)).filter((ip) => !isLoopbackOrUnspecified(ip)); } catch { /* ignore */ }
+    try { good = (await directResolver.resolve4(host)).filter((ip) => !isLoopbackOrUnspecified(ip)); } catch (e) { directError = e.code || e.message; }
   }
-  if (!good.length) throw new Error(`refusing upstream ${host}: resolves only to loopback/none (${ips.join(',') || 'no answer'})`);
+  if (!good.length) {
+    // Two different failures. A loopback-only answer is the guard: the mirror never proxies to itself. No answer at all
+    // means no usable network or DNS (seen during a sleep DarkWake whose Wi-Fi had lost its connection); the client
+    // gets a 502 and retries later.
+    const direct = `direct DNS ${directError || 'no non-loopback A record'}`;
+    if (ips.length) throw new Error(`refusing upstream ${host}: resolves only to loopback (${ips.join(',')}); ${direct}`);
+    throw new Error(`cannot resolve upstream ${host}: system resolver ${lookupError || 'no answer'}; ${direct} (network down?)`);
+  }
   good.sort((a, b) => Number(net.isIPv6(a)) - Number(net.isIPv6(b))); // prefer IPv4
   dnsCache.set(host, { ips: good, until: Date.now() + DNS_TTL_MS });
   return good[0];

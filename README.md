@@ -156,7 +156,11 @@ guarded, so they probably fail quietly, but that is not verified. Try it with `.
 
 Every request is forwarded to the real `apps-mac.razer.com`. The server resolves it with `dns.promises.lookup` and
 refuses a loopback answer; if the system resolver returns only loopback (an `/etc/hosts` entry, say), it asks the DNS
-servers directly. Method, path, query and headers are kept (minus hop-by-hop headers), with SNI and `Host`
+servers directly. IPv6 answers are used (IPv4 preferred). With no usable address the request gets a 502, logged as
+`refusing upstream ... resolves only to loopback` (the guard: the mirror never proxies to itself) or as
+`cannot resolve upstream ... (network down?)` with the resolvers' error codes. The second one is seen during a sleep
+DarkWake whose Wi-Fi has lost its connection, when Synapse's timers fire for a few seconds; Synapse retries later, and
+a service worker whose update fetch fails keeps its installed copy. Method, path, query and headers are kept (minus hop-by-hop headers), with SNI and `Host`
 `apps-mac.razer.com` or the route's `host`. A request no rule matches is streamed back untouched: status, headers and
 body, compressed or binary.
 
