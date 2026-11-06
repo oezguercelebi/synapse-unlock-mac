@@ -479,6 +479,18 @@ mirror → launchd restarted it within 1 s (`runs = 2`, `last exit code = 137`),
 launching it through the mirror", the new Razer.app carries `--host-rules` and `--ignore-certificate-errors`, and
 39 of its requests reached the mirror within 20 s. `status.sh` exit 0.
 
+**Watchdog under real launchd (2026-11-06, this Mac):** the incident it fixes was Synapse reopened from the Dock,
+running without the switches and showing the mouse as unavailable. Reproduced by quitting Razer.app and running
+`open -a "/Applications/Razer/Razer Synapse.app"`: the launcher started Razer.app with only
+`--url-params=apps=synapse --application-host=apps-mac.razer.com`. 10 s after the open, `agent.out` logged one
+`watchdog:` line (old pid, new pid), the new Razer.app carried `--host-rules` and `--ignore-certificate-errors`, and
+`background-manager.log` went from the service worker's stale `unavailable` to `unsuppted devices []` 2 s after the
+relaunch. No other correction followed in the next 2 minutes. A re-run of `enable-login.sh` handed over with Razer.app's
+pid unchanged; `kill -9` of the mirror ended the agent with 137 and launchd restarted it (mirror answering 2.2 s after
+the kill, Razer.app untouched); `launch.sh` (`kickstart -k`) stopped the agent on SIGTERM within the same second. The
+60 s spacing, the give-up after three corrections and the `status.sh` hints were exercised with stand-ins for Razer.app
+under `/bin/bash` 3.2, not live.
+
 ---
 
 Reverse-engineered and built with Claude Code (Anthropic) on 2026-11-04; OpenRazer was the protocol reference.
