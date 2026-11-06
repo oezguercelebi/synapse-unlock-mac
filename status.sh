@@ -51,6 +51,18 @@ else
   check "--application-host=$HOST" "--application-host=$HOST"
   helpers="$(ps -axo args= | grep -E "$APP_TREE_PATTERN" | grep -c -F -- 'host-rules' || true)"
   echo "  processes in the Razer.app tree carrying host-rules: $helpers"
+  # Opening Synapse from the Dock or /Applications/Razer/Razer Synapse.app starts Razer.app with the stock switches
+  # only. The login agent's watchdog corrects that (agent.sh, watch_razer) unless it has given up.
+  if ! uses_mirror "$main_line"; then
+    watch_pid="$(agent_field pid)"
+    if ! agent_loaded; then
+      echo "  hint: started without the mirror switches (from the Dock or /Applications?); run ./launch.sh"
+    elif [[ -n "$watch_pid" ]] && grep -qF "agent[$watch_pid]: ERROR: watchdog gave up" "$AGENT_OUT" 2>/dev/null; then
+      echo "  hint: started without the mirror switches, and the login agent gave up correcting it (see $AGENT_OUT); run ./launch.sh"
+    else
+      echo "  hint: started without the mirror switches (from the Dock or /Applications?); will be corrected by the login agent within ~10 s"
+    fi
+  fi
 fi
 
 echo "== login agent ($AGENT_LABEL)"

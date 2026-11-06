@@ -317,7 +317,7 @@ would be due within 10 minutes, the agent logs `ERROR: watchdog gave up` and sto
 login, `launch.sh`, `enable-login.sh`), so a changed Razer launcher can never cause a quit/relaunch loop. A Razer.app
 that is not running is left alone (you may have quit it on purpose); the agent launches it only when it starts.
 **The clean way to open Synapse by hand is `./launch.sh`**: with start at login on, it restarts the agent, which
-launches Synapse through the mirror.
+launches Synapse through the mirror. `status.sh` prints a hint when Razer.app runs without the switches.
 
 The repo and the installed copy never write each other's pidfile or logs: each script works on the folder it runs from.
 The repo's scripts stop the agent's mirror with `launchctl bootout`; an installed-copy server that launchd no longer
@@ -388,6 +388,11 @@ Honest ones:
    hardware you own, but Razer could object.
 4. **No Razer code is shipped.** The repo holds rules, not modules: the sibling module is fetched from Razer's CDN at
    runtime, exactly as Synapse does, and edited in memory on the way to Synapse.
+5. **The stock launcher bypasses the mirror.** Opening Synapse from the Dock, Spotlight or
+   `/Applications/Razer/Razer Synapse.app` starts Razer.app without the switches, so it talks to Razer's real server
+   and the mouse shows as unavailable. With start at login on, the agent quits and relaunches it through the mirror
+   within about 10 s (one visible relaunch; see [Start at login](#start-at-login)); without it, Synapse stays stock
+   until `./launch.sh`. Open Synapse with `./launch.sh`.
 
 Smaller ones, for the Basilisk V3:
 
