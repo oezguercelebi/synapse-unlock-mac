@@ -302,9 +302,22 @@ waiting.
 (it keeps waiting if upstream is unreachable at login, and logs any device file it could not load), and then checks
 Razer.app: already running through the mirror, it is left alone;
 running without the switches (started by the stock launcher, say), it is quit and relaunched with them; not running,
-it is launched. The agent then waits on the server, so the job lives exactly as long as the mirror. If the server
-dies, launchd restarts the job and Razer.app, which already points at `127.0.0.1:8443`, reconnects by itself. On
-SIGTERM (`launchctl bootout`, `kickstart -k`) the agent stops the server and leaves Razer.app running.
+it is launched. The agent then checks the server and Razer.app every 5 s, so the job lives exactly as long as the
+mirror. If the server dies, the agent exits with the server's status, launchd restarts the job and Razer.app, which
+already points at `127.0.0.1:8443`, reconnects by itself. On SIGTERM (`launchctl bootout`, `kickstart -k`) the agent
+stops the server and leaves Razer.app running.
+
+**Opening Synapse from the Dock or Applications.** `/Applications/Razer/Razer Synapse.app` (the Dock icon, Spotlight,
+Launchpad) is Razer's launcher: it starts Razer.app with the stock switches only, and Synapse then fetches Razer's real
+device lists and shows the mouse as unavailable again. While the agent is loaded it corrects this: a Razer.app that
+runs without the switches and is at least 8 s old (so the agent never races its startup or its single-instance
+handoff) is quit and relaunched through the mirror. You see Synapse close and open again once, about 10 s after you
+opened it, and `agent.out` gets one line with the old and the new pid. At most one correction per 60 s; when a fourth
+would be due within 10 minutes, the agent logs `ERROR: watchdog gave up` and stops correcting until it restarts (next
+login, `launch.sh`, `enable-login.sh`), so a changed Razer launcher can never cause a quit/relaunch loop. A Razer.app
+that is not running is left alone (you may have quit it on purpose); the agent launches it only when it starts.
+**The clean way to open Synapse by hand is `./launch.sh`**: with start at login on, it restarts the agent, which
+launches Synapse through the mirror.
 
 The repo and the installed copy never write each other's pidfile or logs: each script works on the folder it runs from.
 The repo's scripts stop the agent's mirror with `launchctl bootout`; an installed-copy server that launchd no longer

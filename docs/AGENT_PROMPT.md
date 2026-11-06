@@ -155,8 +155,11 @@ Once the live test passes, set it up so the user never has to think about it aga
   launchd cannot run the repo itself when it lives under `~/Documents`, `~/Desktop`, `~/Downloads`
   or iCloud Drive (macOS TCC: "Operation not permitted", last exit code 126). The agent starts the
   mirror at login, launches Synapse through it once the mirror answers, and restarts the mirror if
-  it ever dies (Synapse reconnects on its own). If a manual mirror from `launch.sh` is running,
-  the script hands over without restarting Synapse. Your new device file only reaches the agent
+  it ever dies (Synapse reconnects on its own). Synapse opened the stock way (Dock,
+  `/Applications/Razer/Razer Synapse.app`) runs without the switches; the agent quits it and
+  relaunches it through the mirror within ~10 s (at most once a minute; after three in ten minutes
+  it gives up). The clean way to open Synapse by hand is `./launch.sh`; tell the user so. If a
+  manual mirror from `launch.sh` is running, the script hands over without restarting Synapse. Your new device file only reaches the agent
   through the copy: run `./enable-login.sh` again after adding or editing it.
 - `./status.sh` shows who owns port 8443 (manual mirror from the repo or the installed copy),
   whether the copy matches the repo, and whether the agent is loaded; the agent's output is in
@@ -169,6 +172,8 @@ Once the live test passes, set it up so the user never has to think about it aga
   ~15 s, with Synapse's pid unchanged; with Synapse quit, `launchctl bootout gui/$(id -u)/com.synapse-unlock-mac.agent`
   + `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.synapse-unlock-mac.agent.plist` →
   the mirror should start and Synapse should be launched with the `--host-rules` switch (`ps -o args=`).
+  Quit Synapse and open `/Applications/Razer/Razer Synapse.app` → within ~15 s `agent.out` should log
+  one `watchdog:` correction, and the new Synapse should carry `--host-rules`.
   `./status.sh` shows the agent's state, its node and its last exit code throughout.
 - Nothing Razer-owned is touched by any of this; Razer's own daemons (Elevation Service,
   GameManagerService) are unaffected. See README, "Start at login".
